@@ -155,6 +155,29 @@ swagger-to-ts validate -i https://petstore.swagger.io/v2/swagger.json
 - `typePrefix` - 生成的类型前缀 (可选)
 - `axiosInstance` - Axios 实例名称 (默认: apiClient)
 - `generateClient` - 是否生成 API 客户端 (默认: true)
+- `interceptors` - 默认拦截器配置 (可选)
+
+### 拦截器配置示例
+
+```json
+{
+  "input": "./swagger.json",
+  "output": "./src/api",
+  "baseURL": "https://api.example.com",
+  "interceptors": {
+    "request": {
+      "onFulfilled": "(config) => { config.headers['X-API-Key'] = 'your-api-key'; return config; }",
+      "onRejected": "(error) => Promise.reject(error)"
+    },
+    "response": {
+      "onFulfilled": "(response) => response",
+      "onRejected": "(error) => { console.error('API Error:', error); return Promise.reject(error); }"
+    }
+  }
+}
+```
+
+**注意**: 配置文件中的拦截器函数需要以字符串形式提供，生成的代码会将其转换为实际的函数。
 
 ## 📁 生成的文件结构
 
@@ -192,7 +215,8 @@ console.log(createdPet.data); // 类型: Pet
 import { ApiClient } from './src/api';
 
 // 创建带有自定义配置的客户端
-const customClient = new ApiClient('https://api.example.com', {
+const customClient = new ApiClient({
+  baseURL: 'https://api.example.com',
   timeout: 10000,
   headers: {
     'Authorization': 'Bearer your-token',
@@ -204,7 +228,76 @@ const customClient = new ApiClient('https://api.example.com', {
 const response = await customClient.listPets();
 ```
 
-### 3. 错误处理
+### 3. 自定义拦截器
+
+生成的 API 客户端支持自定义请求和响应拦截器：
+
+```typescript
+import { ApiClient } from './src/api';
+
+// 方式1：在构造函数中配置拦截器
+const clientWithInterceptors = new ApiClient({
+  baseURL: 'https://api.example.com',
+  interceptors: {
+    request: {
+      onFulfilled: (config) => {
+        // 添加认证头
+        const token = localStorage.getItem('token');
+        if (token) {
+          config.headers.Authorization = `Bearer ${token}`;
+        }
+        console.log('发送请求:', config.url);
+        return config;
+      },
+      onRejected: (error) => {
+        console.error('请求错误:', error);
+        return Promise.reject(error);
+      }
+    },
+    response: {
+      onFulfilled: (response) => {
+        console.log('收到响应:', response.status);
+        return response;
+      },
+      onRejected: (error) => {
+        // 统一错误处理
+        if (error.response?.status === 401) {
+          // 处理未授权错误
+          window.location.href = '/login';
+        }
+        return Promise.reject(error);
+      }
+    }
+  }
+});
+
+// 方式2：动态设置拦截器
+const client = new ApiClient({ baseURL: 'https://api.example.com' });
+
+// 设置请求拦截器
+client.setRequestInterceptor(
+  (config) => {
+    config.headers['X-Request-ID'] = generateRequestId();
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
+// 设置响应拦截器
+client.setResponseInterceptor(
+  (response) => response.data, // 直接返回数据部分
+  (error) => {
+    // 错误日志记录
+    console.error('API Error:', error.response?.data);
+    return Promise.reject(error);
+  }
+);
+
+// 清除所有拦截器
+client.clearInterceptors();
+```
+
+### 4. 错误处理
 
 ```typescript
 try {

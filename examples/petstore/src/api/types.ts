@@ -14,6 +14,22 @@ export interface ApiError {
   code?: string;
 }
 
+// 拦截器类型定义
+export interface RequestInterceptor {
+  onFulfilled?: (config: any) => any | Promise<any>;
+  onRejected?: (error: any) => any;
+}
+
+export interface ResponseInterceptor {
+  onFulfilled?: (response: any) => any | Promise<any>;
+  onRejected?: (error: any) => any;
+}
+
+export interface InterceptorConfig {
+  request?: RequestInterceptor;
+  response?: ResponseInterceptor;
+}
+
 export type Pet = any;
 
 export interface NewPet {

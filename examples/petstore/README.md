@@ -11,6 +11,7 @@ petstore/
 ├── swagger-to-ts.config.json       # 代码生成配置文件
 ├── package.json                    # 项目依赖配置
 ├── tsconfig.json                   # TypeScript 配置
+├── interceptor-examples.ts         # 拦截器使用示例
 ├── src/
 │   ├── api/                        # 生成的 API 代码
 │   │   ├── index.ts               # 入口文件
@@ -107,6 +108,23 @@ const created = await apiClient.addPet(newPet);
 - 类型安全的组件属性和状态
 
 **注意**: 这个文件仅供参考，需要安装 React 相关依赖才能正常使用。
+
+### 拦截器示例 (`interceptor-examples.ts`)
+
+这个文件提供了完整的拦截器使用示例，包括：
+
+- **认证拦截器**: 自动添加 Authorization 头部
+- **日志拦截器**: 记录请求和响应信息
+- **缓存拦截器**: 实现简单的响应缓存机制
+- **重试拦截器**: 自动重试失败的请求
+- **限流拦截器**: 控制请求频率
+
+```typescript
+// 运行拦截器示例
+npx ts-node interceptor-examples.ts
+```
+
+每个示例都展示了不同的拦截器配置方式和实际应用场景。
 
 ## ⚙️ 配置说明
 
@@ -213,12 +231,169 @@ try {
 ### 4. 自定义配置
 
 ```typescript
-const customClient = new ApiClient('https://api.example.com', {
+const customClient = new ApiClient({
+  baseURL: 'https://api.example.com',
   timeout: 5000,
   headers: {
     'Authorization': 'Bearer token'
   }
 });
+```
+
+### 5. 自定义拦截器
+
+生成的 API 客户端支持自定义请求和响应拦截器：
+
+```typescript
+import { ApiClient } from './api';
+
+// 方式1：在构造函数中配置拦截器
+const clientWithInterceptors = new ApiClient({
+  baseURL: 'https://petstore.swagger.io/api',
+  interceptors: {
+    request: {
+      onFulfilled: (config) => {
+        // 添加认证头
+        const token = localStorage.getItem('token');
+        if (token) {
+          config.headers.Authorization = `Bearer ${token}`;
+        }
+        console.log('发送请求:', config.url);
+        return config;
+      },
+      onRejected: (error) => {
+        console.error('请求错误:', error);
+        return Promise.reject(error);
+      }
+    },
+    response: {
+      onFulfilled: (response) => {
+        console.log('收到响应:', response.status);
+        // 可以直接返回数据部分
+        return response.data ? { ...response, data: response.data } : response;
+      },
+      onRejected: (error) => {
+        // 统一错误处理
+        if (error.response?.status === 401) {
+          console.log('未授权，请重新登录');
+          // 可以跳转到登录页面
+        }
+        return Promise.reject(error);
+      }
+    }
+  }
+});
+
+// 方式2：动态设置拦截器
+const client = new ApiClient({ baseURL: 'https://petstore.swagger.io/api' });
+
+// 设置请求拦截器
+client.setRequestInterceptor(
+  (config) => {
+    config.headers['X-Request-ID'] = Date.now().toString();
+    config.headers['X-Client-Version'] = '1.0.0';
+    return config;
+  },
+  (error) => {
+    console.error('请求拦截器错误:', error);
+    return Promise.reject(error);
+  }
+);
+
+// 设置响应拦截器
+client.setResponseInterceptor(
+  (response) => {
+    // 记录响应时间
+    console.log(`API 响应时间: ${Date.now() - response.config.metadata?.startTime}ms`);
+    return response;
+  },
+  (error) => {
+    // 错误日志记录
+    console.error('API 错误:', {
+      url: error.config?.url,
+      method: error.config?.method,
+      status: error.response?.status,
+      message: error.message
+    });
+    return Promise.reject(error);
+  }
+);
+
+// 清除所有拦截器
+client.clearInterceptors();
+```
+
+### 6. 拦截器实际应用示例
+
+```typescript
+// 创建带有完整拦截器配置的客户端
+const petStoreClient = new ApiClient({
+  baseURL: 'https://petstore.swagger.io/api',
+  timeout: 10000,
+  interceptors: {
+    request: {
+      onFulfilled: (config) => {
+        // 添加时间戳
+        config.metadata = { startTime: Date.now() };
+        
+        // 添加 API Key（如果需要）
+        if (process.env.API_KEY) {
+          config.headers['X-API-Key'] = process.env.API_KEY;
+        }
+        
+        // 请求日志
+        console.log(`🚀 发送 ${config.method?.toUpperCase()} 请求到: ${config.url}`);
+        
+        return config;
+      }
+    },
+    response: {
+      onFulfilled: (response) => {
+        // 响应时间计算
+        const duration = Date.now() - response.config.metadata?.startTime;
+        console.log(`✅ 请求成功 (${duration}ms):`, response.status);
+        
+        return response;
+      },
+      onRejected: (error) => {
+        // 详细错误处理
+        const duration = Date.now() - error.config?.metadata?.startTime;
+        console.error(`❌ 请求失败 (${duration}ms):`, {
+          url: error.config?.url,
+          status: error.response?.status,
+          message: error.message
+        });
+        
+        // 根据错误类型进行不同处理
+        if (error.response?.status === 404) {
+          console.warn('资源未找到');
+        } else if (error.response?.status >= 500) {
+          console.error('服务器错误，请稍后重试');
+        }
+        
+        return Promise.reject(error);
+      }
+    }
+  }
+});
+
+// 使用配置好的客户端
+async function demonstrateInterceptors() {
+  try {
+    // 这些请求都会经过拦截器处理
+    const pets = await petStoreClient.findPets({ limit: 5 });
+    console.log('获取到宠物列表:', pets.data);
+    
+    const newPet = await petStoreClient.addPet({
+      name: '小白',
+      status: 'available'
+    });
+    console.log('创建新宠物:', newPet.data);
+    
+  } catch (error) {
+    console.error('操作失败:', error);
+  }
+}
 ```
 
 ## 🔄 使用不同的 Swagger 文件
@@ -256,7 +431,7 @@ interface ExtendedPet extends GeneratedPet {
 import { apiClient } from './api';
 
 // 添加请求拦截器
-apiClient.interceptors.request.use((config) => {
+apiClient.setRequestInterceptor((config) => {
   config.headers.Authorization = `Bearer ${getToken()}`;
   return config;
 });

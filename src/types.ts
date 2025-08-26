@@ -159,6 +159,22 @@ export interface PropertyDefinition {
   description?: string;
 }
 
+// 拦截器类型定义
+export interface RequestInterceptor {
+  onFulfilled?: (config: any) => any | Promise<any>;
+  onRejected?: (error: any) => any;
+}
+
+export interface ResponseInterceptor {
+  onFulfilled?: (response: any) => any | Promise<any>;
+  onRejected?: (error: any) => any;
+}
+
+export interface InterceptorConfig {
+  request?: RequestInterceptor;
+  response?: ResponseInterceptor;
+}
+
 // 生成配置
 export interface GeneratorConfig {
   input: string; // swagger.json 文件路径
@@ -167,4 +183,5 @@ export interface GeneratorConfig {
   axiosInstance?: string; // axios 实例名称
   typePrefix?: string; // 类型前缀
   generateClient?: boolean; // 是否生成客户端
+  interceptors?: InterceptorConfig; // 拦截器配置
 }

@@ -36,7 +36,8 @@ async function customClientExample() {
   console.log('\n=== 自定义客户端示例 ===');
   
   // 创建自定义配置的客户端
-  const customClient = new ApiClient('https://petstore.swagger.io/api', {
+  const customClient = new ApiClient({
+    baseURL: 'https://petstore.swagger.io/api',
     timeout: 5000,
     headers: {
       'Authorization': 'Bearer your-token-here',

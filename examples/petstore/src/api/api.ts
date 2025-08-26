@@ -4,37 +4,70 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
 import * as Types from './types';
 
+// 拦截器配置接口
+export interface ApiClientConfig extends AxiosRequestConfig {
+  baseURL?: string;
+  interceptors?: Types.InterceptorConfig;
+}
+
 export class ApiClient {
   private apiClient: AxiosInstance;
 
-  constructor(baseURL: string = 'https://petstore.swagger.io/api', config?: AxiosRequestConfig) {
+  constructor(config: ApiClientConfig = {}) {
+    const { baseURL = 'https://petstore.swagger.io/api', interceptors, ...axiosConfig } = config;
+
     this.apiClient = axios.create({
       baseURL,
       timeout: 10000,
       headers: {
         'Content-Type': 'application/json',
       },
-      ...config,
+      ...axiosConfig,
     });
 
+    this.setupInterceptors(interceptors);
+  }
+
+  private setupInterceptors(interceptors?: Types.InterceptorConfig) {
     // 请求拦截器
-    this.apiClient.interceptors.request.use(
-      (config) => config,
-      (error) => Promise.reject(error)
-    );
+    const requestOnFulfilled = interceptors?.request?.onFulfilled || ((config) => config);
+    const requestOnRejected = interceptors?.request?.onRejected || ((error) => Promise.reject(error));
+    this.apiClient.interceptors.request.use(requestOnFulfilled, requestOnRejected);
 
     // 响应拦截器
-    this.apiClient.interceptors.response.use(
-      (response) => response,
-      (error) => {
-        const apiError: Types.ApiError = {
-          message: error.message,
-          status: error.response?.status,
-          code: error.code,
-        };
-        return Promise.reject(apiError);
-      }
+    const responseOnFulfilled = interceptors?.response?.onFulfilled || ((response) => response);
+    const responseOnRejected = interceptors?.response?.onRejected || ((error) => {
+      const apiError: Types.ApiError = {
+        message: error.message,
+        status: error.response?.status,
+        code: error.code,
+      };
+      return Promise.reject(apiError);
+    });
+    this.apiClient.interceptors.response.use(responseOnFulfilled, responseOnRejected);
+  }
+
+  // 动态设置拦截器的方法
+  setRequestInterceptor(interceptor: Types.RequestInterceptor) {
+    this.apiClient.interceptors.request.use(
+      interceptor.onFulfilled || ((config) => config),
+      interceptor.onRejected || ((error) => Promise.reject(error))
     );
+  }
+
+  setResponseInterceptor(interceptor: Types.ResponseInterceptor) {
+    this.apiClient.interceptors.response.use(
+      interceptor.onFulfilled || ((response) => response),
+      interceptor.onRejected || ((error) => Promise.reject(error))
+    );
+  }
+
+  // 清除所有拦截器
+  clearInterceptors() {
+    this.apiClient.interceptors.request.clear();
+    this.apiClient.interceptors.response.clear();
+    // 重新设置默认拦截器
+    this.setupInterceptors();
   }
 
   /**

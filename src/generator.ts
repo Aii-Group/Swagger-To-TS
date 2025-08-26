@@ -4,7 +4,10 @@ import {
   ApiEndpoint,
   TypeDefinition,
   GeneratorConfig,
-  PropertyDefinition
+  PropertyDefinition,
+  InterceptorConfig,
+  RequestInterceptor,
+  ResponseInterceptor
 } from './types';
 import { SwaggerParser } from './parser';
 
@@ -64,6 +67,24 @@ export class TypeScriptGenerator {
     lines.push('}');
     lines.push('');
 
+    // 生成拦截器类型
+    lines.push('// 拦截器类型定义');
+    lines.push('export interface RequestInterceptor {');
+    lines.push('  onFulfilled?: (config: any) => any | Promise<any>;');
+    lines.push('  onRejected?: (error: any) => any;');
+    lines.push('}');
+    lines.push('');
+    lines.push('export interface ResponseInterceptor {');
+    lines.push('  onFulfilled?: (response: any) => any | Promise<any>;');
+    lines.push('  onRejected?: (error: any) => any;');
+    lines.push('}');
+    lines.push('');
+    lines.push('export interface InterceptorConfig {');
+    lines.push('  request?: RequestInterceptor;');
+    lines.push('  response?: ResponseInterceptor;');
+    lines.push('}');
+    lines.push('');
+
     // 生成模型类型
     typeDefinitions.forEach(typeDef => {
       if (typeDef.description) {
@@ -116,6 +137,12 @@ export class TypeScriptGenerator {
     lines.push('import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from \'axios\';');
     lines.push('import * as Types from \'./types\';');
     lines.push('');
+    lines.push('// 拦截器配置接口');
+    lines.push('export interface ApiClientConfig extends AxiosRequestConfig {');
+    lines.push('  baseURL?: string;');
+    lines.push('  interceptors?: Types.InterceptorConfig;');
+    lines.push('}');
+    lines.push('');
 
     // 生成 API 客户端类
     const instanceName = this.config.axiosInstance || 'apiClient';
@@ -124,34 +151,62 @@ export class TypeScriptGenerator {
     lines.push(`export class ApiClient {`);
     lines.push(`  private ${instanceName}: AxiosInstance;`);
     lines.push('');
-    lines.push(`  constructor(baseURL: string = '${baseURL}', config?: AxiosRequestConfig) {`);
+    lines.push(`  constructor(config: ApiClientConfig = {}) {`);
+    lines.push(`    const { baseURL = '${baseURL}', interceptors, ...axiosConfig } = config;`);
+    lines.push(``);
     lines.push(`    this.${instanceName} = axios.create({`);
     lines.push(`      baseURL,`);
     lines.push(`      timeout: 10000,`);
     lines.push(`      headers: {`);
     lines.push(`        'Content-Type': 'application/json',`);
     lines.push(`      },`);
-    lines.push(`      ...config,`);
+    lines.push(`      ...axiosConfig,`);
     lines.push(`    });`);
+    lines.push(``);
+    lines.push(`    this.setupInterceptors(interceptors);`);
+
+    lines.push(`  }`);
     lines.push('');
+    lines.push(`  private setupInterceptors(interceptors?: Types.InterceptorConfig) {`);
     lines.push(`    // 请求拦截器`);
-    lines.push(`    this.${instanceName}.interceptors.request.use(`);
-    lines.push(`      (config) => config,`);
-    lines.push(`      (error) => Promise.reject(error)`);
-    lines.push(`    );`);
+    lines.push(`    const requestOnFulfilled = interceptors?.request?.onFulfilled || ((config) => config);`);
+    lines.push(`    const requestOnRejected = interceptors?.request?.onRejected || ((error) => Promise.reject(error));`);
+    lines.push(`    this.${instanceName}.interceptors.request.use(requestOnFulfilled, requestOnRejected);`);
     lines.push('');
     lines.push(`    // 响应拦截器`);
-    lines.push(`    this.${instanceName}.interceptors.response.use(`);
-    lines.push(`      (response) => response,`);
-    lines.push(`      (error) => {`);
-    lines.push(`        const apiError: Types.ApiError = {`);
-    lines.push(`          message: error.message,`);
-    lines.push(`          status: error.response?.status,`);
-    lines.push(`          code: error.code,`);
-    lines.push(`        };`);
-    lines.push(`        return Promise.reject(apiError);`);
-    lines.push(`      }`);
+    lines.push(`    const responseOnFulfilled = interceptors?.response?.onFulfilled || ((response) => response);`);
+    lines.push(`    const responseOnRejected = interceptors?.response?.onRejected || ((error) => {`);
+    lines.push(`      const apiError: Types.ApiError = {`);
+    lines.push(`        message: error.message,`);
+    lines.push(`        status: error.response?.status,`);
+    lines.push(`        code: error.code,`);
+    lines.push(`      };`);
+    lines.push(`      return Promise.reject(apiError);`);
+    lines.push(`    });`);
+    lines.push(`    this.${instanceName}.interceptors.response.use(responseOnFulfilled, responseOnRejected);`);
+    lines.push(`  }`);
+    lines.push('');
+    lines.push(`  // 动态设置拦截器的方法`);
+    lines.push(`  setRequestInterceptor(interceptor: Types.RequestInterceptor) {`);
+    lines.push(`    this.${instanceName}.interceptors.request.use(`);
+    lines.push(`      interceptor.onFulfilled || ((config) => config),`);
+    lines.push(`      interceptor.onRejected || ((error) => Promise.reject(error))`);
     lines.push(`    );`);
+    lines.push(`  }`);
+    lines.push('');
+    lines.push(`  setResponseInterceptor(interceptor: Types.ResponseInterceptor) {`);
+    lines.push(`    this.${instanceName}.interceptors.response.use(`);
+    lines.push(`      interceptor.onFulfilled || ((response) => response),`);
+    lines.push(`      interceptor.onRejected || ((error) => Promise.reject(error))`);
+    lines.push(`    );`);
+    lines.push(`  }`);
+    lines.push('');
+    lines.push(`  // 清除所有拦截器`);
+    lines.push(`  clearInterceptors() {`);
+    lines.push(`    this.${instanceName}.interceptors.request.clear();`);
+    lines.push(`    this.${instanceName}.interceptors.response.clear();`);
+    lines.push(`    // 重新设置默认拦截器`);
+    lines.push(`    this.setupInterceptors();`);
     lines.push(`  }`);
     lines.push('');
 
@@ -173,7 +228,7 @@ export class TypeScriptGenerator {
     lines.push('}');
     lines.push('');
     lines.push('// 默认导出实例');
-    lines.push('export const apiClient = new ApiClient();');
+    lines.push(`export const apiClient = new ApiClient();`);
     lines.push('');
     lines.push('export default apiClient;');
 
