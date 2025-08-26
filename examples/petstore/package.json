@@ -1,0 +1,28 @@
+{
+  "name": "petstore-example",
+  "version": "1.0.0",
+  "description": "Example project demonstrating swagger-to-ts-axios usage",
+  "main": "index.js",
+  "scripts": {
+    "generate": "swagger-to-ts generate -c swagger-to-ts.config.json",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts"
+  },
+  "dependencies": {
+    "axios": "^1.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "ts-node": "^10.9.0"
+  },
+  "keywords": [
+    "swagger",
+    "typescript",
+    "axios",
+    "api-client"
+  ],
+  "author": "Swagger to TypeScript Axios",
+  "license": "MIT"
+}
