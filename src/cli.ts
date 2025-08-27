@@ -12,7 +12,7 @@ const program = new Command();
 program
   .name('swagger-to-ts')
   .description('从 Swagger/OpenAPI 规范生成 TypeScript 接口和 API 客户端')
-  .version('1.0.0');
+  .version('1.1.1');
 
 program
   .command('generate')
@@ -114,8 +114,6 @@ program
     };
     
     const configPath = path.resolve(options.output);
-
-    console.log(`📁 输出路径: ${configPath}`, fs.existsSync(configPath));
     
     if (fs.existsSync(configPath)) {
       console.error(`❌ 配置文件已存在: ${configPath}`);
