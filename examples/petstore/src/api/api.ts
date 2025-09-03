@@ -73,27 +73,27 @@ export class ApiClient {
   /**
    * Returns all pets from the system that the user has access to
    */
-  async findPets(params?: { tags?: any[]; limit?: number }, config?: AxiosRequestConfig): Promise<Types.Pet[]> {
+  findPets = async (params?: { tags?: any[]; limit?: number }, config?: AxiosRequestConfig): Promise<Types.Pet[]> => {
     return this.apiClient.get('/pets', { params, ...config });
-  }
+  };
   /**
    * Creates a new pet in the store
    */
-  async addPet(data: Types.NewPet, config?: AxiosRequestConfig): Promise<Types.Pet> {
+  addPet = async (data: Types.NewPet, config?: AxiosRequestConfig): Promise<Types.Pet> => {
     return this.apiClient.post('/pets', data, { ...config });
-  }
+  };
   /**
    * Returns a user based on a single ID, if the user does not have access to the pet
    */
-  async findPetById(id: number, config?: AxiosRequestConfig): Promise<Types.Pet> {
+  findPetById = async (id: number, config?: AxiosRequestConfig): Promise<Types.Pet> => {
     return this.apiClient.get(`/pets/${id}`, { ...config });
-  }
+  };
   /**
    * deletes a single pet based on the ID supplied
    */
-  async deletePet(id: number, config?: AxiosRequestConfig): Promise<void> {
+  deletePet = async (id: number, config?: AxiosRequestConfig): Promise<void> => {
     return this.apiClient.delete(`/pets/${id}`, { ...config });
-  }
+  };
 }
 
 // 默认导出实例

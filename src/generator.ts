@@ -318,7 +318,7 @@ export class TypeScriptGenerator {
     
     // 生成方法
     const paramsStr = params.join(', ');
-    lines.push(`  async ${methodName}(${paramsStr}): Promise<${returnType}> {`);
+    lines.push(`  ${methodName} = async (${paramsStr}): Promise<${returnType}> => {`);
     
     // 构建 URL
     let url = endpoint.path;
@@ -360,7 +360,7 @@ export class TypeScriptGenerator {
     
     const method = endpoint.method.toLowerCase();
     lines.push(`    return this.${this.config.axiosInstance || 'apiClient'}.${method}(${requestParams.join(', ')});`);
-    lines.push(`  }`);
+    lines.push(`  };`);
     
     return lines;
   }
