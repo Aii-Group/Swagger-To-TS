@@ -3,11 +3,7 @@ import * as path from 'path';
 import {
   ApiEndpoint,
   TypeDefinition,
-  GeneratorConfig,
-  PropertyDefinition,
-  InterceptorConfig,
-  RequestInterceptor,
-  ResponseInterceptor
+  GeneratorConfig
 } from './types';
 import { SwaggerParser } from './parser';
 
@@ -164,7 +160,6 @@ export class TypeScriptGenerator {
     lines.push(`    });`);
     lines.push(``);
     lines.push(`    this.setupInterceptors(interceptors);`);
-
     lines.push(`  }`);
     lines.push('');
     lines.push(`  private setupInterceptors(interceptors?: Types.InterceptorConfig) {`);
@@ -174,7 +169,7 @@ export class TypeScriptGenerator {
     lines.push(`    this.${instanceName}.interceptors.request.use(requestOnFulfilled, requestOnRejected);`);
     lines.push('');
     lines.push(`    // 响应拦截器`);
-    lines.push(`    const responseOnFulfilled = interceptors?.response?.onFulfilled || ((response) => response);`);
+    lines.push(`    const responseOnFulfilled = interceptors?.response?.onFulfilled || ((response) => response.data);`);
     lines.push(`    const responseOnRejected = interceptors?.response?.onRejected || ((error) => {`);
     lines.push(`      const apiError: Types.ApiError = {`);
     lines.push(`        message: error.message,`);
@@ -209,7 +204,6 @@ export class TypeScriptGenerator {
     lines.push(`    this.setupInterceptors();`);
     lines.push(`  }`);
     lines.push('');
-
     // 按标签分组生成方法
     const groupedEndpoints = this.groupEndpointsByTag(endpoints);
     
@@ -221,8 +215,11 @@ export class TypeScriptGenerator {
       tagEndpoints.forEach(endpoint => {
         const methodContent = this.generateEndpointMethod(endpoint);
         lines.push(...methodContent);
-        lines.push('');
       });
+      
+      if (tag && tag !== 'default') {
+        lines.push('');
+      }
     });
 
     lines.push('}');
@@ -235,7 +232,7 @@ export class TypeScriptGenerator {
     return lines.join('\n');
   }
 
-  private groupEndpointsByTag(endpoints: ApiEndpoint[]): Record<string, ApiEndpoint[]> {
+   private groupEndpointsByTag(endpoints: ApiEndpoint[]): Record<string, ApiEndpoint[]> {
     const grouped: Record<string, ApiEndpoint[]> = {};
     
     endpoints.forEach(endpoint => {
@@ -321,7 +318,7 @@ export class TypeScriptGenerator {
     
     // 生成方法
     const paramsStr = params.join(', ');
-    lines.push(`  async ${methodName}(${paramsStr}): Promise<Types.ApiResponse<${returnType}>> {`);
+    lines.push(`  async ${methodName}(${paramsStr}): Promise<${returnType}> {`);
     
     // 构建 URL
     let url = endpoint.path;
@@ -330,7 +327,8 @@ export class TypeScriptGenerator {
     });
     
     // 生成请求调用
-    const requestParams: string[] = [`'${url}'`];
+    const hasPathParams = pathParams.length > 0;
+    const requestParams: string[] = [hasPathParams ? `\`${url}\`` : `'${url}'`];
     
     if (bodyParam) {
       requestParams.push('data');

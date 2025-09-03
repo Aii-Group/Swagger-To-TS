@@ -35,7 +35,7 @@ export class ApiClient {
     this.apiClient.interceptors.request.use(requestOnFulfilled, requestOnRejected);
 
     // 响应拦截器
-    const responseOnFulfilled = interceptors?.response?.onFulfilled || ((response) => response);
+    const responseOnFulfilled = interceptors?.response?.onFulfilled || ((response) => response.data);
     const responseOnRejected = interceptors?.response?.onRejected || ((error) => {
       const apiError: Types.ApiError = {
         message: error.message,
@@ -73,31 +73,27 @@ export class ApiClient {
   /**
    * Returns all pets from the system that the user has access to
    */
-  async findPets(params?: { tags?: any[]; limit?: number }, config?: AxiosRequestConfig): Promise<Types.ApiResponse<Types.Pet[]>> {
+  async findPets(params?: { tags?: any[]; limit?: number }, config?: AxiosRequestConfig): Promise<Types.Pet[]> {
     return this.apiClient.get('/pets', { params, ...config });
   }
-
   /**
    * Creates a new pet in the store
    */
-  async addPet(data: Types.NewPet, config?: AxiosRequestConfig): Promise<Types.ApiResponse<Types.Pet>> {
+  async addPet(data: Types.NewPet, config?: AxiosRequestConfig): Promise<Types.Pet> {
     return this.apiClient.post('/pets', data, { ...config });
   }
-
   /**
    * Returns a user based on a single ID, if the user does not have access to the pet
    */
-  async findPetById(id: number, config?: AxiosRequestConfig): Promise<Types.ApiResponse<Types.Pet>> {
-    return this.apiClient.get('/pets/${id}', { ...config });
+  async findPetById(id: number, config?: AxiosRequestConfig): Promise<Types.Pet> {
+    return this.apiClient.get(`/pets/${id}`, { ...config });
   }
-
   /**
    * deletes a single pet based on the ID supplied
    */
-  async deletePet(id: number, config?: AxiosRequestConfig): Promise<Types.ApiResponse<void>> {
-    return this.apiClient.delete('/pets/${id}', { ...config });
+  async deletePet(id: number, config?: AxiosRequestConfig): Promise<void> {
+    return this.apiClient.delete(`/pets/${id}`, { ...config });
   }
-
 }
 
 // 默认导出实例

@@ -8,7 +8,7 @@ async function basicExample() {
     // 1. 获取所有宠物
     console.log('1. 获取所有宠物...');
     const petsResponse = await apiClient.findPets({ limit: 10 });
-    console.log('获取到的宠物:', petsResponse.data);
+    console.log('获取到的宠物:', petsResponse);
     
     // 2. 创建新宠物
     console.log('\n2. 创建新宠物...');
@@ -19,12 +19,12 @@ async function basicExample() {
     };
     
     const createdPetResponse = await apiClient.addPet(newPet);
-    console.log('创建的宠物:', createdPetResponse.data);
+    console.log('创建的宠物:', createdPetResponse);
     
     // 3. 根据ID获取宠物
     console.log('\n3. 根据ID获取宠物...');
     const petResponse = await apiClient.findPetById(1);
-    console.log('获取到的宠物:', petResponse.data);
+    console.log('获取到的宠物:', petResponse);
     
   } catch (error) {
     console.error('API 调用出错:', error);
@@ -47,7 +47,7 @@ async function customClientExample() {
   
   try {
     const response = await customClient.findPets({ limit: 5 });
-    console.log('自定义客户端获取的宠物:', response.data);
+    console.log('自定义客户端获取的宠物:', response);
   } catch (error) {
     console.error('自定义客户端调用出错:', error);
   }
