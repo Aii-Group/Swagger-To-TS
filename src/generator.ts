@@ -407,10 +407,20 @@ export class TypeScriptGenerator {
     // 处理数组类型
     if (type.endsWith('[]')) {
       const baseType = type.slice(0, -2);
+      
+      // 如果基础类型是基础类型，直接返回
       if (basicTypes.includes(baseType)) {
         return type;
       }
-      return `Types.${baseType}[]`;
+      
+      // 如果基础类型是内联对象类型（如 { ... }），直接返回
+      if (baseType.startsWith('{') && baseType.endsWith('}')) {
+        return type;
+      }
+      
+      // 递归处理基础类型，然后添加数组标记
+      const processedBaseType = this.addTypesPrefix(baseType);
+      return `${processedBaseType}[]`;
     }
     
     // 处理泛型类型
