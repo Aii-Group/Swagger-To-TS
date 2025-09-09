@@ -182,6 +182,10 @@ export class SwaggerParser {
         if (schema.enum) {
           return schema.enum.map(v => `'${v}'`).join(' | ');
         }
+        // 处理文件上传类型
+        if (schema.format === 'binary') {
+          return 'File';
+        }
         return 'string';
       case 'number':
       case 'integer':
