@@ -125,16 +125,78 @@ export class SwaggerParser {
           description: bodyParam.description
         };
       }
+
+      // 处理 Swagger 2.0 的 formData 参数
+      const formDataParams = allParameters.filter(p => p.in === 'formData');
+      if (formDataParams.length > 0) {
+        const formDataFields: { [key: string]: { type: string; required: boolean; description?: string } } = {};
+        
+        formDataParams.forEach(param => {
+          let paramType = 'any';
+          if (param.type) {
+            if (param.type === 'string' && param.format === 'binary') {
+              paramType = 'File';
+            } else if (param.type === 'file') {
+              paramType = 'File';
+            } else if (param.type === 'array' && param.items) {
+              paramType = `${this.resolveType(param.items)}[]`;
+            } else {
+              paramType = param.type;
+            }
+          } else if (param.schema) {
+            paramType = this.resolveType(param.schema);
+          }
+          
+          formDataFields[param.name] = {
+            type: paramType,
+            required: param.required || false,
+            description: param.description
+          };
+        });
+
+        return {
+          type: 'FormData',
+          required: formDataParams.some(p => p.required),
+          description: 'Form data parameters',
+          contentType: 'multipart/form-data',
+          isFormData: true,
+          formDataFields
+        };
+      }
     }
 
     // OpenAPI 3.0 requestBody
     if (requestBody?.content) {
       const contentType = Object.keys(requestBody.content)[0];
       const schema = requestBody.content[contentType]?.schema;
+      
+      // 检查是否为 multipart/form-data
+      if (contentType === 'multipart/form-data' && schema?.properties) {
+        const formDataFields: { [key: string]: { type: string; required: boolean; description?: string } } = {};
+        
+        Object.entries(schema.properties).forEach(([key, prop]) => {
+          formDataFields[key] = {
+            type: this.resolveType(prop as SwaggerSchema),
+            required: schema.required?.includes(key) || false,
+            description: (prop as SwaggerSchema).description
+          };
+        });
+
+        return {
+          type: 'FormData',
+          required: requestBody.required || false,
+          description: requestBody.description,
+          contentType,
+          isFormData: true,
+          formDataFields
+        };
+      }
+
       return {
         type: this.resolveType(schema),
         required: requestBody.required || false,
-        description: requestBody.description
+        description: requestBody.description,
+        contentType
       };
     }
 

@@ -138,6 +138,9 @@ export interface ApiRequestBody {
   type: string;
   required: boolean;
   description?: string;
+  contentType?: string;
+  isFormData?: boolean;
+  formDataFields?: { [key: string]: { type: string; required: boolean; description?: string } };
 }
 
 export interface ApiResponse {

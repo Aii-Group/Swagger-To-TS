@@ -270,11 +270,24 @@ export class TypeScriptGenerator {
     
     // 请求体参数
     if (bodyParam) {
-      const bodyType = this.addTypesPrefix(bodyParam.type);
-      if (bodyParam.required) {
-        requiredParams.push(`data: ${bodyType}`);
+      if (bodyParam.isFormData && bodyParam.formDataFields) {
+        // FormData 参数处理
+        Object.entries(bodyParam.formDataFields).forEach(([fieldName, fieldInfo]) => {
+          const paramType = this.addTypesPrefix(fieldInfo.type);
+          if (fieldInfo.required) {
+            requiredParams.push(`${fieldName}: ${paramType}`);
+          } else {
+            optionalParams.push(`${fieldName}?: ${paramType}`);
+          }
+        });
       } else {
-        optionalParams.push(`data?: ${bodyType}`);
+        // 普通请求体参数
+        const bodyType = this.addTypesPrefix(bodyParam.type);
+        if (bodyParam.required) {
+          requiredParams.push(`data: ${bodyType}`);
+        } else {
+          optionalParams.push(`data?: ${bodyType}`);
+        }
       }
     }
     
@@ -331,11 +344,36 @@ export class TypeScriptGenerator {
     const requestParams: string[] = [hasPathParams ? `\`${url}\`` : `'${url}'`];
     
     if (bodyParam) {
-      requestParams.push('data');
+      if (bodyParam.isFormData && bodyParam.formDataFields) {
+        // FormData 处理：构建 FormData 对象
+        lines.push(`    const formData = new FormData();`);
+        Object.entries(bodyParam.formDataFields).forEach(([fieldName, fieldInfo]) => {
+           if (fieldInfo.required) {
+             lines.push(`    formData.append('${fieldName}', ${fieldName});`);
+           } else {
+             lines.push(`    if (${fieldName} !== undefined) {`);
+             if (fieldInfo.type.includes('[]')) {
+               // 处理数组类型
+               lines.push(`      ${fieldName}.forEach(item => formData.append('${fieldName}', item));`);
+             } else {
+               lines.push(`      formData.append('${fieldName}', ${fieldName});`);
+             }
+             lines.push(`    }`);
+           }
+         });
+        requestParams.push('formData');
+      } else {
+        requestParams.push('data');
+      }
     }
     
     // 添加配置对象
     const configParts: string[] = [];
+    
+    // 为 FormData 请求添加正确的 Content-Type
+    if (bodyParam?.isFormData) {
+      configParts.push(`headers: { 'Content-Type': 'multipart/form-data' }`);
+    }
     
     if (queryParams.length > 0) {
       if (requiredQueryParams.length > 0 && optionalQueryParams.length > 0) {
