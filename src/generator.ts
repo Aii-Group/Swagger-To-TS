@@ -367,7 +367,7 @@ export class TypeScriptGenerator {
       }
     }
     
-    // 添加配置对象
+    // 构建配置对象
     const configParts: string[] = [];
     
     // 为 FormData 请求添加正确的 Content-Type
@@ -375,6 +375,7 @@ export class TypeScriptGenerator {
       configParts.push(`headers: { 'Content-Type': 'multipart/form-data' }`);
     }
     
+    // 处理查询参数
     if (queryParams.length > 0) {
       if (requiredQueryParams.length > 0 && optionalQueryParams.length > 0) {
         // 同时有必选和可选查询参数
@@ -386,18 +387,33 @@ export class TypeScriptGenerator {
         configParts.push(`params: { ${requiredParamsObj} }`);
       } else {
         // 只有可选查询参数
-        configParts.push('params');
+        configParts.push('params: params');
       }
     }
     
-    configParts.push('...config');
-    
+    // 构建最终的配置对象
+    let configStr = '';
     if (configParts.length > 0) {
-      requestParams.push(`{ ${configParts.join(', ')} }`);
+      configStr = `{ ${configParts.join(', ')}, ...config }`;
+    } else {
+      configStr = 'config';
     }
     
     const method = endpoint.method.toLowerCase();
-    lines.push(`    return this.${this.config.axiosInstance || 'apiClient'}.${method}(${requestParams.join(', ')});`);
+    
+    // 根据 HTTP 方法构建正确的 axios 调用
+    if (['get', 'delete', 'head', 'options'].includes(method)) {
+      // GET/DELETE 等方法：axios.get(url, config)
+      lines.push(`    return this.${this.config.axiosInstance || 'apiClient'}.${method}(${requestParams[0]}, ${configStr});`);
+    } else {
+      // POST/PUT/PATCH 等方法：axios.post(url, data, config)
+      if (bodyParam) {
+        lines.push(`    return this.${this.config.axiosInstance || 'apiClient'}.${method}(${requestParams[0]}, ${requestParams[1]}, ${configStr});`);
+      } else {
+        // 没有请求体的 POST/PUT 请求
+        lines.push(`    return this.${this.config.axiosInstance || 'apiClient'}.${method}(${requestParams[0]}, null, ${configStr});`);
+      }
+    }
     lines.push(`  };`);
     
     return lines;

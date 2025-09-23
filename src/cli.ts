@@ -12,7 +12,7 @@ const program = new Command();
 program
   .name('swagger-to-ts')
   .description('从 Swagger/OpenAPI 规范生成 TypeScript 接口和 API 客户端')
-  .version('1.1.1');
+  .version('1.1.7');
 
 program
   .command('generate')
