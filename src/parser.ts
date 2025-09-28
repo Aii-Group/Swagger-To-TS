@@ -265,7 +265,8 @@ export class SwaggerParser {
             .map(([key, prop]) => {
               const required = schema.required?.includes(key) || false;
               const optional = required ? '' : '?';
-              return `${key}${optional}: ${this.resolveType(prop)}`;
+              const propType = this.resolveType(prop);
+              return `${key}${optional}: ${propType}`;
             })
             .join('; ');
           return `{ ${props} }`;

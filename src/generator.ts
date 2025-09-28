@@ -63,6 +63,10 @@ export class TypeScriptGenerator {
     lines.push('}');
     lines.push('');
 
+    // 生成文件类型定义
+    lines.push('// 文件上传类型定义');
+    lines.push('');
+
     // 生成拦截器类型
     lines.push('// 拦截器类型定义');
     lines.push('export interface RequestInterceptor {');
@@ -273,7 +277,12 @@ export class TypeScriptGenerator {
       if (bodyParam.isFormData && bodyParam.formDataFields) {
         // FormData 参数处理
         Object.entries(bodyParam.formDataFields).forEach(([fieldName, fieldInfo]) => {
-          const paramType = this.addTypesPrefix(fieldInfo.type);
+          let paramType = fieldInfo.type;
+          if (paramType === 'File') {
+            paramType = 'File';
+          } else {
+            paramType = this.addTypesPrefix(fieldInfo.type);
+          }
           if (fieldInfo.required) {
             requiredParams.push(`${fieldName}: ${paramType}`);
           } else {
@@ -449,13 +458,13 @@ export class TypeScriptGenerator {
 
   private addTypesPrefix(type: string): string {
     // 基础类型不需要添加前缀
-    const basicTypes = ['string', 'number', 'boolean', 'any', 'void', 'object', 'unknown'];
+    const basicTypes = ['string', 'number', 'boolean', 'any', 'void', 'object', 'unknown', 'File'];
     // TypeScript 内置泛型类型
     const builtinGenericTypes = ['Record', 'Partial', 'Required', 'Pick', 'Omit', 'Exclude', 'Extract', 'NonNullable', 'ReturnType', 'InstanceType', 'ThisType', 'Parameters', 'ConstructorParameters'];
     
     // 处理对象类型（如 { file: string }）
     if (type.startsWith('{') && type.endsWith('}')) {
-      return type;
+      return type.replace(/:\s*File\b/g, ': File');
     }
     
     // 处理数组类型
