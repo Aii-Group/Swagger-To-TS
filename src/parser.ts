@@ -16,10 +16,47 @@ import {
 export class SwaggerParser {
   private spec: SwaggerSpec;
   private definitions: Map<string, SwaggerSchema> = new Map();
+  private typeNameMapping: Map<string, string> = new Map(); // 类型名称映射
+  private usedTypeNames: Set<string> = new Set(); // 已使用的类型名称集合
 
   constructor(spec: SwaggerSpec) {
     this.spec = spec;
     this.loadDefinitions();
+  }
+
+  private generateRandomEnglishTypeName(): string {
+    const chars = 'abcdefghijklmnopqrstuvwxyz';
+    let result = '';
+    let attempts = 0;
+    const maxAttempts = 1000; // 防止无限循环
+    
+    do {
+      result = '';
+      // 生成6-10位的随机字符串
+      const length = Math.floor(Math.random() * 5) + 6;
+      for (let i = 0; i < length; i++) {
+        result += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      
+      // 首字母大写（符合类型名规范）
+      result = result.charAt(0).toUpperCase() + result.slice(1);
+      attempts++;
+      
+      // 如果尝试次数过多，添加数字后缀确保唯一性
+      if (attempts >= maxAttempts) {
+        let counter = 1;
+        const baseResult = result;
+        while (this.usedTypeNames.has(result)) {
+          result = baseResult + counter;
+          counter++;
+        }
+        break;
+      }
+    } while (this.usedTypeNames.has(result));
+    
+    // 将生成的名称添加到已使用集合中
+    this.usedTypeNames.add(result);
+    return result;
   }
 
   static async fromFile(filePath: string): Promise<SwaggerParser> {
@@ -235,7 +272,7 @@ export class SwaggerParser {
     // 处理引用
     if (schema.$ref) {
       const refName = schema.$ref.split('/').pop();
-      return refName || 'any';
+      return refName ? this.sanitizeTypeName(refName) : 'any';
     }
 
     // 处理基本类型
@@ -293,6 +330,9 @@ export class SwaggerParser {
   }
 
   private generateTypeDefinition(name: string, schema: SwaggerSchema): TypeDefinition | null {
+    // 清理类型名，处理中文字符
+    const sanitizedName = this.sanitizeTypeName(name);
+    
     if (schema.type === 'object' && schema.properties) {
       const properties: { [name: string]: PropertyDefinition } = {};
       
@@ -307,7 +347,7 @@ export class SwaggerParser {
       });
 
       return {
-        name,
+        name: sanitizedName,
         type: 'interface',
         properties,
         description: schema.description
@@ -317,7 +357,7 @@ export class SwaggerParser {
     // 处理枚举类型
     if (schema.enum) {
       return {
-        name,
+        name: sanitizedName,
         type: 'enum',
         description: schema.description
       };
@@ -325,7 +365,7 @@ export class SwaggerParser {
 
     // 处理类型别名
     return {
-      name,
+      name: sanitizedName,
       type: 'type',
       description: schema.description
     };
@@ -335,6 +375,58 @@ export class SwaggerParser {
     return str
       .replace(/[-_]+(.)/g, (_, char) => char.toUpperCase())
       .replace(/^[A-Z]/, char => char.toLowerCase());
+  }
+
+  /**
+   * 清理类型名，处理中文字符
+   * 如果包含中文字符，直接使用英文名+DTO/VO
+   */
+  private sanitizeTypeName(name: string): string {
+    if (!name) return 'UnknownType';
+
+    // 检查是否已经有映射
+    if (this.typeNameMapping.has(name)) {
+      return this.typeNameMapping.get(name)!;
+    }
+
+    let result: string;
+
+    // 检查是否包含中文字符
+    const hasChinese = /[\u4e00-\u9fff]/.test(name);
+    
+    if (hasChinese) {
+       // 如果包含中文字符，随机生成英文名称
+       result = this.generateRandomEnglishTypeName();
+     } else {
+      // 如果不包含中文字符，进行基本的清理
+      result = name
+        .replace(/[^a-zA-Z0-9_]/g, '') // 移除非字母数字下划线的字符
+        .replace(/^[0-9]+/, ''); // 移除开头的数字
+
+      // 确保首字母大写
+      if (result) {
+        result = result.charAt(0).toUpperCase() + result.slice(1);
+      } else {
+        result = 'UnknownType';
+      }
+
+      // 检查非中文名称是否与已生成的随机名称冲突
+      if (this.usedTypeNames.has(result)) {
+        let counter = 1;
+        const baseResult = result;
+        while (this.usedTypeNames.has(result)) {
+          result = baseResult + counter;
+          counter++;
+        }
+      }
+
+      // 将非中文的类型名称也添加到已使用集合中
+      this.usedTypeNames.add(result);
+    }
+
+    // 保存映射关系
+    this.typeNameMapping.set(name, result);
+    return result;
   }
 
   getBaseUrl(): string {

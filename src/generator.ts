@@ -10,10 +10,44 @@ import { SwaggerParser } from './parser';
 export class TypeScriptGenerator {
   private config: GeneratorConfig;
   private parser: SwaggerParser;
+  private usedMethodNames: Set<string> = new Set(); // 已使用的方法名称集合
 
   constructor(config: GeneratorConfig, parser: SwaggerParser) {
     this.config = config;
     this.parser = parser;
+  }
+
+  private generateRandomEnglishMethodName(): string {
+    const chars = 'abcdefghijklmnopqrstuvwxyz';
+    let result = '';
+    let attempts = 0;
+    const maxAttempts = 1000; // 防止无限循环
+    
+    do {
+      result = '';
+      // 生成6-10位的随机字符串
+      const length = Math.floor(Math.random() * 5) + 6;
+      for (let i = 0; i < length; i++) {
+        result += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      
+      attempts++;
+      
+      // 如果尝试次数过多，添加数字后缀确保唯一性
+      if (attempts >= maxAttempts) {
+        let counter = 1;
+        const baseResult = result;
+        while (this.usedMethodNames.has(result)) {
+          result = baseResult + counter;
+          counter++;
+        }
+        break;
+      }
+    } while (this.usedMethodNames.has(result));
+    
+    // 将生成的名称添加到已使用集合中
+    this.usedMethodNames.add(result);
+    return result;
   }
 
   async generate(): Promise<void> {
@@ -430,7 +464,8 @@ export class TypeScriptGenerator {
 
   private generateMethodName(endpoint: ApiEndpoint): string {
     if (endpoint.operationId) {
-      return this.toCamelCase(endpoint.operationId);
+      const sanitizedOperationId = this.sanitizeMethodName(endpoint.operationId);
+      return this.toCamelCase(sanitizedOperationId);
     }
     
     // 根据路径和方法生成方法名
@@ -439,6 +474,42 @@ export class TypeScriptGenerator {
     const method = endpoint.method.toLowerCase();
     
     return this.toCamelCase(`${method}_${lastPart}`);
+  }
+
+  /**
+   * 清理方法名，处理中文字符
+   */
+  private sanitizeMethodName(name: string): string {
+    if (!name) return 'unknownMethod';
+
+    // 检查是否包含中文字符
+    const hasChinese = /[\u4e00-\u9fff]/.test(name);
+    
+    if (hasChinese) {
+       // 如果包含中文字符，随机生成英文方法名
+       return this.generateRandomEnglishMethodName();
+     }
+
+    // 如果不包含中文字符，进行基本的清理
+    let result = name
+      .replace(/[^a-zA-Z0-9_]/g, '') // 移除非字母数字下划线的字符
+      .replace(/^[0-9]+/, ''); // 移除开头的数字
+
+    result = result || 'unknownMethod';
+    
+    // 检查是否与已有方法名冲突
+    if (this.usedMethodNames.has(result)) {
+      let counter = 1;
+      const baseResult = result;
+      while (this.usedMethodNames.has(result)) {
+        result = baseResult + counter;
+        counter++;
+      }
+    }
+    
+    // 将方法名添加到已使用集合中
+    this.usedMethodNames.add(result);
+    return result;
   }
 
   private generateQueryParamsType(queryParams: any[]): string {
