@@ -266,7 +266,9 @@ export class SwaggerParser {
               const required = schema.required?.includes(key) || false;
               const optional = required ? '' : '?';
               const propType = this.resolveType(prop);
-              return `${key}${optional}: ${propType}`;
+              // 将连字符转换为驼峰命名
+              const camelCaseKey = this.toCamelCase(key);
+              return `${camelCaseKey}${optional}: ${propType}`;
             })
             .join('; ');
           return `{ ${props} }`;
@@ -295,7 +297,9 @@ export class SwaggerParser {
       const properties: { [name: string]: PropertyDefinition } = {};
       
       Object.entries(schema.properties).forEach(([propName, propSchema]) => {
-        properties[propName] = {
+        // 将连字符转换为驼峰命名
+        const camelCasePropName = this.toCamelCase(propName);
+        properties[camelCasePropName] = {
           type: this.resolveType(propSchema),
           required: schema.required?.includes(propName) || false,
           description: propSchema.description
@@ -325,6 +329,12 @@ export class SwaggerParser {
       type: 'type',
       description: schema.description
     };
+  }
+
+  private toCamelCase(str: string): string {
+    return str
+      .replace(/[-_]+(.)/g, (_, char) => char.toUpperCase())
+      .replace(/^[A-Z]/, char => char.toLowerCase());
   }
 
   getBaseUrl(): string {
