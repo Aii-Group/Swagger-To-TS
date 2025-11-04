@@ -303,9 +303,9 @@ export class SwaggerParser {
               const required = schema.required?.includes(key) || false;
               const optional = required ? '' : '?';
               const propType = this.resolveType(prop);
-              // 将连字符转换为驼峰命名
-              const camelCaseKey = this.toCamelCase(key);
-              return `${camelCaseKey}${optional}: ${propType}`;
+              // 将连字符转换为驼峰命名（或加引号）
+              const propertyKey = this.toPropertyKey(key);
+              return `${propertyKey}${optional}: ${propType}`;
             })
             .join('; ');
           return `{ ${props} }`;
@@ -337,9 +337,8 @@ export class SwaggerParser {
       const properties: { [name: string]: PropertyDefinition } = {};
       
       Object.entries(schema.properties).forEach(([propName, propSchema]) => {
-        // 将连字符转换为驼峰命名
-        const camelCasePropName = this.toCamelCase(propName);
-        properties[camelCasePropName] = {
+        const propertyKey = this.toPropertyKey(propName);
+        properties[propertyKey] = {
           type: this.resolveType(propSchema),
           required: schema.required?.includes(propName) || false,
           description: propSchema.description
@@ -371,15 +370,20 @@ export class SwaggerParser {
     };
   }
 
-  private toCamelCase(str: string): string {
-    return str
-      .replace(/[-_]+(.)/g, (_, char) => char.toUpperCase())
-      .replace(/^[A-Z]/, char => char.toLowerCase());
+  /**
+   * 属性名转换：
+   * 1. 如果包含中划线（-），整体加引号返回，保持原样
+   * 2. 否则直接返回原字符串
+   */
+  private toPropertyKey(str: string): string {
+    if (str.includes('-')) {
+      return `"${str}"`;
+    }
+    return str;
   }
 
   /**
    * 清理类型名，处理中文字符
-   * 如果包含中文字符，直接使用英文名+DTO/VO
    */
   private sanitizeTypeName(name: string): string {
     if (!name) return 'UnknownType';
