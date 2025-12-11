@@ -385,7 +385,8 @@ export class TypeScriptGenerator {
     // 生成请求调用
     const hasPathParams = pathParams.length > 0;
     const requestParams: string[] = [hasPathParams ? `\`${url}\`` : `'${url}'`];
-    
+    // 用于在某些方法（如 DELETE）通过 config.data 传递 body
+    let bodyArgName: string | null = null;
     if (bodyParam) {
       if (bodyParam.isFormData && bodyParam.formDataFields) {
         // FormData 处理：构建 FormData 对象
@@ -404,12 +405,17 @@ export class TypeScriptGenerator {
              lines.push(`    }`);
            }
          });
-        requestParams.push('formData');
+        bodyArgName = 'formData';
+        requestParams.push(bodyArgName);
       } else {
-        requestParams.push('data');
+        bodyArgName = 'data';
+        requestParams.push(bodyArgName);
       }
     }
     
+    // 方法小写名（用于决定如何传 body）
+    const method = endpoint.method.toLowerCase();
+
     // 构建配置对象
     const configParts: string[] = [];
     
@@ -441,9 +447,17 @@ export class TypeScriptGenerator {
     } else {
       configStr = 'config';
     }
-    
-    const method = endpoint.method.toLowerCase();
-    
+
+    // 如果当前方法是不带独立 body 参数的类型（如 GET/DELETE），但存在请求体，则通过 config.data 发送
+    if (bodyParam && ['delete', 'get', 'head', 'options'].includes(method) && bodyArgName) {
+      // 将 body 插入到 configParts 的最前面，确保最终的 config 包含 data 字段
+      // 避免重复插入（如果已经存在 data 字段）
+      const alreadyHasData = configParts.some(p => /^data\s*:\s*/.test(p));
+      if (!alreadyHasData) {
+        configStr = `{ data: ${bodyArgName}${configParts.length > 0 ? ', ' : ''}${configParts.join(', ')}, ...config }`;
+      }
+    }
+
     // 根据 HTTP 方法构建正确的 axios 调用
     if (['get', 'delete', 'head', 'options'].includes(method)) {
       // GET/DELETE 等方法：axios.get(url, config)

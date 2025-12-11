@@ -1,8 +1,0 @@
-{
-  "input": "./swagger.json",
-  "output": "./src/api",
-  "baseURL": "https://petstore.swagger.io/api",
-  "typePrefix": "",
-  "axiosInstance": "apiClient",
-  "generateClient": true
-}
