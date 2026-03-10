@@ -37,6 +37,7 @@ export interface SwaggerPathItem {
   patch?: SwaggerOperation;
   options?: SwaggerOperation;
   head?: SwaggerOperation;
+  parameters?: SwaggerParameter[];
 }
 
 export interface SwaggerOperation {
@@ -60,6 +61,8 @@ export interface SwaggerParameter {
   format?: string;
   schema?: SwaggerSchema;
   items?: SwaggerSchema;
+  collectionFormat?: string;
+  enum?: any[];
 }
 
 export interface SwaggerRequestBody {
@@ -99,18 +102,33 @@ export interface SwaggerSchema {
   format?: string;
   items?: SwaggerSchema;
   properties?: { [name: string]: SwaggerSchema };
+  additionalProperties?: SwaggerSchema | boolean;
   required?: string[];
   enum?: any[];
   $ref?: string;
   allOf?: SwaggerSchema[];
   oneOf?: SwaggerSchema[];
   anyOf?: SwaggerSchema[];
+  not?: SwaggerSchema;
   description?: string;
   example?: any;
   default?: any;
   nullable?: boolean;
   readOnly?: boolean;
   writeOnly?: boolean;
+  title?: string;
+  minimum?: number;
+  maximum?: number;
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
+}
+
+// 规范校验警告
+export interface ValidationWarning {
+  type: 'invalidName' | 'missingField' | 'invalidFormat' | 'nonCompliant';
+  message: string;
+  location?: string;
 }
 
 // 生成的接口信息
@@ -124,6 +142,7 @@ export interface ApiEndpoint {
   requestBody?: ApiRequestBody;
   responses: ApiResponse[];
   tags?: string[];
+  warnings?: string[];
 }
 
 export interface ApiParameter {
@@ -151,9 +170,12 @@ export interface ApiResponse {
 
 export interface TypeDefinition {
   name: string;
-  type: string;
+  type: 'interface' | 'enum' | 'type';
   properties?: { [name: string]: PropertyDefinition };
+  enumValues?: string[];
+  aliasType?: string;
   description?: string;
+  warnings?: string[];
 }
 
 export interface PropertyDefinition {
@@ -180,11 +202,11 @@ export interface InterceptorConfig {
 
 // 生成配置
 export interface GeneratorConfig {
-  input: string; // swagger.json 文件路径
-  output: string; // 输出目录
-  baseURL?: string; // API 基础 URL
-  axiosInstance?: string; // axios 实例名称
-  typePrefix?: string; // 类型前缀
-  generateClient?: boolean; // 是否生成客户端
-  interceptors?: InterceptorConfig; // 拦截器配置
+  input: string;
+  output: string;
+  baseURL?: string;
+  axiosInstance?: string;
+  typePrefix?: string;
+  generateClient?: boolean;
+  interceptors?: InterceptorConfig;
 }
