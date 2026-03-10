@@ -343,12 +343,17 @@ export class TypeScriptGenerator {
     if (bodyParam?.isFormData && bodyParam.formDataFields) {
       lines.push(`    const formData = new FormData();`);
       Object.entries(bodyParam.formDataFields).forEach(([fieldName, fieldInfo]) => {
+        const isArray = fieldInfo.type.endsWith('[]');
         if (fieldInfo.required) {
-          lines.push(`    formData.append('${fieldName}', ${fieldName} as any);`);
+          if (isArray) {
+            lines.push(`    ${fieldName}.forEach(item => formData.append('${fieldName}', item as any));`);
+          } else {
+            lines.push(`    formData.append('${fieldName}', ${fieldName} as any);`);
+          }
         } else {
           lines.push(`    if (${fieldName} !== undefined) {`);
-          if (fieldInfo.type.includes('[]')) {
-            lines.push(`      (${fieldName} as any[]).forEach(item => formData.append('${fieldName}', item));`);
+          if (isArray) {
+            lines.push(`      ${fieldName}.forEach(item => formData.append('${fieldName}', item as any));`);
           } else {
             lines.push(`      formData.append('${fieldName}', ${fieldName} as any);`);
           }
