@@ -2,6 +2,7 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 import {
   ApiEndpoint,
+  ApiParameter,
   TypeDefinition,
   GeneratorConfig
 } from './types';
@@ -10,77 +11,39 @@ import { SwaggerParser } from './parser';
 export class TypeScriptGenerator {
   private config: GeneratorConfig;
   private parser: SwaggerParser;
-  private usedMethodNames: Set<string> = new Set(); // 已使用的方法名称集合
+  private usedMethodNames: Set<string> = new Set();
+  private unknownMethodCounter = 0;
 
   constructor(config: GeneratorConfig, parser: SwaggerParser) {
     this.config = config;
     this.parser = parser;
   }
 
-  private generateRandomEnglishMethodName(): string {
-    const chars = 'abcdefghijklmnopqrstuvwxyz';
-    let result = '';
-    let attempts = 0;
-    const maxAttempts = 1000; // 防止无限循环
-    
-    do {
-      result = '';
-      // 生成6-10位的随机字符串
-      const length = Math.floor(Math.random() * 5) + 6;
-      for (let i = 0; i < length; i++) {
-        result += chars.charAt(Math.floor(Math.random() * chars.length));
-      }
-      
-      attempts++;
-      
-      // 如果尝试次数过多，添加数字后缀确保唯一性
-      if (attempts >= maxAttempts) {
-        let counter = 1;
-        const baseResult = result;
-        while (this.usedMethodNames.has(result)) {
-          result = baseResult + counter;
-          counter++;
-        }
-        break;
-      }
-    } while (this.usedMethodNames.has(result));
-    
-    // 将生成的名称添加到已使用集合中
-    this.usedMethodNames.add(result);
-    return result;
-  }
-
   async generate(): Promise<void> {
     await fs.ensureDir(this.config.output);
-
-    // 生成类型定义
     await this.generateTypes();
 
-    // 生成 API 客户端
     if (this.config.generateClient !== false) {
       await this.generateApiClient();
     }
 
-    // 生成入口文件
     await this.generateIndex();
   }
 
   private async generateTypes(): Promise<void> {
     const typeDefinitions = this.parser.getTypeDefinitions();
     const content = this.generateTypesContent(typeDefinitions);
-    
     const filePath = path.join(this.config.output, 'types.ts');
     await fs.writeFile(filePath, content, 'utf-8');
   }
 
   private generateTypesContent(typeDefinitions: TypeDefinition[]): string {
     const lines: string[] = [];
-    
+
     lines.push('// 自动生成的类型定义文件');
     lines.push('// 请勿手动修改此文件');
     lines.push('');
 
-    // 生成基础响应类型
     lines.push('export interface ApiResponse<T = any> {');
     lines.push('  data: T;');
     lines.push('  status: number;');
@@ -89,7 +52,6 @@ export class TypeScriptGenerator {
     lines.push('}');
     lines.push('');
 
-    // 生成错误类型
     lines.push('export interface ApiError {');
     lines.push('  message: string;');
     lines.push('  status?: number;');
@@ -97,12 +59,6 @@ export class TypeScriptGenerator {
     lines.push('}');
     lines.push('');
 
-    // 生成文件类型定义
-    lines.push('// 文件上传类型定义');
-    lines.push('');
-
-    // 生成拦截器类型
-    lines.push('// 拦截器类型定义');
     lines.push('export interface RequestInterceptor {');
     lines.push('  onFulfilled?: (config: any) => any | Promise<any>;');
     lines.push('  onRejected?: (error: any) => any;');
@@ -119,35 +75,33 @@ export class TypeScriptGenerator {
     lines.push('}');
     lines.push('');
 
-    // 生成模型类型
     typeDefinitions.forEach(typeDef => {
       if (typeDef.description) {
-        lines.push(`// ${typeDef.description}`);
+        lines.push(`/** ${typeDef.description} */`);
       }
-      
+
       const prefix = this.config.typePrefix || '';
       const typeName = `${prefix}${typeDef.name}`;
-      
+
+      // types.ts 中所有类型在同一文件，直接使用裸类型名（不加 Types. 前缀）
       if (typeDef.type === 'interface' && typeDef.properties) {
         lines.push(`export interface ${typeName} {`);
-        
         Object.entries(typeDef.properties).forEach(([propName, prop]) => {
           if (prop.description) {
-            lines.push(`  // ${prop.description}`);
+            lines.push(`  /** ${prop.description} */`);
           }
           const optional = prop.required ? '' : '?';
           lines.push(`  ${propName}${optional}: ${prop.type};`);
         });
-        
         lines.push('}');
-      } else if (typeDef.type === 'enum') {
-        // 处理枚举类型
-        lines.push(`export type ${typeName} = string;`);
+      } else if (typeDef.type === 'enum' && typeDef.enumValues && typeDef.enumValues.length > 0) {
+        lines.push(`export type ${typeName} = ${typeDef.enumValues.join(' | ')};`);
+      } else if (typeDef.type === 'type') {
+        lines.push(`export type ${typeName} = ${typeDef.aliasType || 'any'};`);
       } else {
-        // 处理类型别名
         lines.push(`export type ${typeName} = any;`);
       }
-      
+
       lines.push('');
     });
 
@@ -157,58 +111,51 @@ export class TypeScriptGenerator {
   private async generateApiClient(): Promise<void> {
     const endpoints = this.parser.getApiEndpoints();
     const content = this.generateApiClientContent(endpoints);
-    
     const filePath = path.join(this.config.output, 'api.ts');
     await fs.writeFile(filePath, content, 'utf-8');
   }
 
   private generateApiClientContent(endpoints: ApiEndpoint[]): string {
     const lines: string[] = [];
-    
+
     lines.push('// 自动生成的 API 客户端文件');
     lines.push('// 请勿手动修改此文件');
     lines.push('');
-    lines.push('import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from \'axios\';');
+    lines.push('import axios, { AxiosInstance, AxiosRequestConfig } from \'axios\';');
     lines.push('import * as Types from \'./types\';');
     lines.push('');
-    lines.push('// 拦截器配置接口');
     lines.push('export interface ApiClientConfig extends AxiosRequestConfig {');
     lines.push('  baseURL?: string;');
     lines.push('  interceptors?: Types.InterceptorConfig;');
     lines.push('}');
     lines.push('');
 
-    // 生成 API 客户端类
     const instanceName = this.config.axiosInstance || 'apiClient';
     const baseURL = this.config.baseURL || this.parser.getBaseUrl();
-    
+
     lines.push(`export class ApiClient {`);
     lines.push(`  private ${instanceName}: AxiosInstance;`);
     lines.push('');
     lines.push(`  constructor(config: ApiClientConfig = {}) {`);
     lines.push(`    const { baseURL = '${baseURL}', interceptors, ...axiosConfig } = config;`);
-    lines.push(``);
+    lines.push('');
     lines.push(`    this.${instanceName} = axios.create({`);
     lines.push(`      baseURL,`);
     lines.push(`      timeout: 10000,`);
-    lines.push(`      headers: {`);
-    lines.push(`        'Content-Type': 'application/json',`);
-    lines.push(`      },`);
+    lines.push(`      headers: { 'Content-Type': 'application/json' },`);
     lines.push(`      ...axiosConfig,`);
     lines.push(`    });`);
-    lines.push(``);
+    lines.push('');
     lines.push(`    this.setupInterceptors(interceptors);`);
     lines.push(`  }`);
     lines.push('');
     lines.push(`  private setupInterceptors(interceptors?: Types.InterceptorConfig) {`);
-    lines.push(`    // 请求拦截器`);
-    lines.push(`    const requestOnFulfilled = interceptors?.request?.onFulfilled || ((config) => config);`);
-    lines.push(`    const requestOnRejected = interceptors?.request?.onRejected || ((error) => Promise.reject(error));`);
-    lines.push(`    this.${instanceName}.interceptors.request.use(requestOnFulfilled, requestOnRejected);`);
+    lines.push(`    const reqFulfilled = interceptors?.request?.onFulfilled || ((config: any) => config);`);
+    lines.push(`    const reqRejected = interceptors?.request?.onRejected || ((error: any) => Promise.reject(error));`);
+    lines.push(`    this.${instanceName}.interceptors.request.use(reqFulfilled, reqRejected);`);
     lines.push('');
-    lines.push(`    // 响应拦截器`);
-    lines.push(`    const responseOnFulfilled = interceptors?.response?.onFulfilled || ((response) => response.data);`);
-    lines.push(`    const responseOnRejected = interceptors?.response?.onRejected || ((error) => {`);
+    lines.push(`    const resFulfilled = interceptors?.response?.onFulfilled || ((response: any) => response.data);`);
+    lines.push(`    const resRejected = interceptors?.response?.onRejected || ((error: any) => {`);
     lines.push(`      const apiError: Types.ApiError = {`);
     lines.push(`        message: error.message,`);
     lines.push(`        status: error.response?.status,`);
@@ -216,53 +163,47 @@ export class TypeScriptGenerator {
     lines.push(`      };`);
     lines.push(`      return Promise.reject(apiError);`);
     lines.push(`    });`);
-    lines.push(`    this.${instanceName}.interceptors.response.use(responseOnFulfilled, responseOnRejected);`);
+    lines.push(`    this.${instanceName}.interceptors.response.use(resFulfilled, resRejected);`);
     lines.push(`  }`);
     lines.push('');
-    lines.push(`  // 动态设置拦截器的方法`);
     lines.push(`  setRequestInterceptor(interceptor: Types.RequestInterceptor) {`);
     lines.push(`    this.${instanceName}.interceptors.request.use(`);
-    lines.push(`      interceptor.onFulfilled || ((config) => config),`);
-    lines.push(`      interceptor.onRejected || ((error) => Promise.reject(error))`);
+    lines.push(`      interceptor.onFulfilled || ((config: any) => config),`);
+    lines.push(`      interceptor.onRejected || ((error: any) => Promise.reject(error))`);
     lines.push(`    );`);
     lines.push(`  }`);
     lines.push('');
     lines.push(`  setResponseInterceptor(interceptor: Types.ResponseInterceptor) {`);
     lines.push(`    this.${instanceName}.interceptors.response.use(`);
-    lines.push(`      interceptor.onFulfilled || ((response) => response),`);
-    lines.push(`      interceptor.onRejected || ((error) => Promise.reject(error))`);
+    lines.push(`      interceptor.onFulfilled || ((response: any) => response),`);
+    lines.push(`      interceptor.onRejected || ((error: any) => Promise.reject(error))`);
     lines.push(`    );`);
     lines.push(`  }`);
     lines.push('');
-    lines.push(`  // 清除所有拦截器`);
     lines.push(`  clearInterceptors() {`);
     lines.push(`    this.${instanceName}.interceptors.request.clear();`);
     lines.push(`    this.${instanceName}.interceptors.response.clear();`);
-    lines.push(`    // 重新设置默认拦截器`);
     lines.push(`    this.setupInterceptors();`);
     lines.push(`  }`);
     lines.push('');
-    // 按标签分组生成方法
+
     const groupedEndpoints = this.groupEndpointsByTag(endpoints);
-    
+
     Object.entries(groupedEndpoints).forEach(([tag, tagEndpoints]) => {
       if (tag && tag !== 'default') {
-        lines.push(`  // ${tag} 相关接口`);
+        lines.push(`  // ── ${tag} ──`);
       }
-      
+
       tagEndpoints.forEach(endpoint => {
         const methodContent = this.generateEndpointMethod(endpoint);
         lines.push(...methodContent);
       });
-      
-      if (tag && tag !== 'default') {
-        lines.push('');
-      }
+
+      lines.push('');
     });
 
     lines.push('}');
     lines.push('');
-    lines.push('// 默认导出实例');
     lines.push(`export const apiClient = new ApiClient();`);
     lines.push('');
     lines.push('export default apiClient;');
@@ -270,9 +211,9 @@ export class TypeScriptGenerator {
     return lines.join('\n');
   }
 
-   private groupEndpointsByTag(endpoints: ApiEndpoint[]): Record<string, ApiEndpoint[]> {
+  private groupEndpointsByTag(endpoints: ApiEndpoint[]): Record<string, ApiEndpoint[]> {
     const grouped: Record<string, ApiEndpoint[]> = {};
-    
+
     endpoints.forEach(endpoint => {
       const tag = endpoint.tags?.[0] || 'default';
       if (!grouped[tag]) {
@@ -280,23 +221,23 @@ export class TypeScriptGenerator {
       }
       grouped[tag].push(endpoint);
     });
-    
+
     return grouped;
   }
 
   private generateEndpointMethod(endpoint: ApiEndpoint): string[] {
     const lines: string[] = [];
-    
     const methodName = this.generateMethodName(endpoint);
+
+    // 只处理 path、query、body 参数（header 已在 parser 中警告并跳过）
     const pathParams = endpoint.parameters.filter(p => p.in === 'path');
     const queryParams = endpoint.parameters.filter(p => p.in === 'query');
     const bodyParam = endpoint.requestBody;
-    
-    // 生成方法签名 - 按照必选参数在前，可选参数在后的顺序
+
     const requiredParams: string[] = [];
     const optionalParams: string[] = [];
-    
-    // 路径参数
+
+    // path 参数（规范要求必须是 required）
     pathParams.forEach(param => {
       const paramType = this.addTypesPrefix(param.type);
       if (param.required) {
@@ -305,18 +246,12 @@ export class TypeScriptGenerator {
         optionalParams.push(`${param.name}?: ${paramType}`);
       }
     });
-    
+
     // 请求体参数
     if (bodyParam) {
       if (bodyParam.isFormData && bodyParam.formDataFields) {
-        // FormData 参数处理
         Object.entries(bodyParam.formDataFields).forEach(([fieldName, fieldInfo]) => {
-          let paramType = fieldInfo.type;
-          if (paramType === 'File') {
-            paramType = 'File';
-          } else {
-            paramType = this.addTypesPrefix(fieldInfo.type);
-          }
+          const paramType = fieldInfo.type === 'File' ? 'File' : this.addTypesPrefix(fieldInfo.type);
           if (fieldInfo.required) {
             requiredParams.push(`${fieldName}: ${paramType}`);
           } else {
@@ -324,7 +259,6 @@ export class TypeScriptGenerator {
           }
         });
       } else {
-        // 普通请求体参数
         const bodyType = this.addTypesPrefix(bodyParam.type);
         if (bodyParam.required) {
           requiredParams.push(`data: ${bodyType}`);
@@ -333,35 +267,30 @@ export class TypeScriptGenerator {
         }
       }
     }
-    
-    // 查询参数 - 分别处理必选和可选的查询参数
+
+    // query 参数
     const requiredQueryParams = queryParams.filter(p => p.required);
     const optionalQueryParams = queryParams.filter(p => !p.required);
-    
-    // 必选查询参数作为独立参数
+
     requiredQueryParams.forEach(param => {
-      const paramType = this.addTypesPrefix(param.type);
-      requiredParams.push(`${param.name}: ${paramType}`);
+      requiredParams.push(`${param.name}: ${this.addTypesPrefix(param.type)}`);
     });
-    
-    // 可选查询参数组合成 params 对象
+
     if (optionalQueryParams.length > 0) {
       const queryType = this.generateQueryParamsType(optionalQueryParams);
       optionalParams.push(`params?: ${queryType}`);
     }
-    
-    // 配置参数（总是可选的）
+
     optionalParams.push('config?: AxiosRequestConfig');
-    
-    // 合并参数：必选参数在前，可选参数在后
-     const params = [...requiredParams, ...optionalParams];
-     
-     // 返回类型
+
+    const params = [...requiredParams, ...optionalParams];
+
     const successResponse = endpoint.responses.find(r => r.statusCode.startsWith('2'));
     const returnType = successResponse ? this.addTypesPrefix(successResponse.type) : 'any';
 
-    // 生成注释
-    if (endpoint.summary || endpoint.description) {
+    // JSDoc 注释
+    const hasDoc = endpoint.summary || endpoint.description;
+    if (hasDoc) {
       lines.push(`  /**`);
       if (endpoint.summary) {
         lines.push(`   * ${endpoint.summary}`);
@@ -369,169 +298,170 @@ export class TypeScriptGenerator {
       if (endpoint.description && endpoint.description !== endpoint.summary) {
         lines.push(`   * ${endpoint.description}`);
       }
+      lines.push(`   * @route ${endpoint.method} ${endpoint.path}`);
       lines.push(`   */`);
     }
-    
-    // 生成方法
+
     const paramsStr = params.join(', ');
     lines.push(`  ${methodName} = async (${paramsStr}): Promise<${returnType}> => {`);
-    
+
     // 构建 URL
     let url = endpoint.path;
     pathParams.forEach(param => {
       url = url.replace(`{${param.name}}`, `\${${param.name}}`);
     });
-    
-    // 生成请求调用
+
     const hasPathParams = pathParams.length > 0;
-    const requestParams: string[] = [hasPathParams ? `\`${url}\`` : `'${url}'`];
-    // 用于在某些方法（如 DELETE）通过 config.data 传递 body
-    let bodyArgName: string | null = null;
-    if (bodyParam) {
-      if (bodyParam.isFormData && bodyParam.formDataFields) {
-        // FormData 处理：构建 FormData 对象
-        lines.push(`    const formData = new FormData();`);
-        Object.entries(bodyParam.formDataFields).forEach(([fieldName, fieldInfo]) => {
-           if (fieldInfo.required) {
-             lines.push(`    formData.append('${fieldName}', ${fieldName});`);
-           } else {
-             lines.push(`    if (${fieldName} !== undefined) {`);
-             if (fieldInfo.type.includes('[]')) {
-               // 处理数组类型
-               lines.push(`      ${fieldName}.forEach(item => formData.append('${fieldName}', item));`);
-             } else {
-               lines.push(`      formData.append('${fieldName}', ${fieldName});`);
-             }
-             lines.push(`    }`);
-           }
-         });
-        bodyArgName = 'formData';
-        requestParams.push(bodyArgName);
-      } else {
-        bodyArgName = 'data';
-        requestParams.push(bodyArgName);
-      }
-    }
-    
-    // 方法小写名（用于决定如何传 body）
+    const urlStr = hasPathParams ? `\`${url}\`` : `'${url}'`;
+    const axisInstance = `this.${this.config.axiosInstance || 'apiClient'}`;
     const method = endpoint.method.toLowerCase();
 
-    // 构建配置对象
+    // 构建 config 对象
     const configParts: string[] = [];
-    
-    // 为 FormData 请求添加正确的 Content-Type
+
     if (bodyParam?.isFormData) {
       configParts.push(`headers: { 'Content-Type': 'multipart/form-data' }`);
     }
-    
-    // 处理查询参数
+
     if (queryParams.length > 0) {
       if (requiredQueryParams.length > 0 && optionalQueryParams.length > 0) {
-        // 同时有必选和可选查询参数
-        const requiredParamsObj = requiredQueryParams.map(p => `${p.name}`).join(', ');
-        configParts.push(`params: { ${requiredParamsObj}, ...params }`);
+        const reqKeys = requiredQueryParams.map(p => p.name).join(', ');
+        configParts.push(`params: { ${reqKeys}, ...params }`);
       } else if (requiredQueryParams.length > 0) {
-        // 只有必选查询参数
-        const requiredParamsObj = requiredQueryParams.map(p => `${p.name}`).join(', ');
-        configParts.push(`params: { ${requiredParamsObj} }`);
+        const reqKeys = requiredQueryParams.map(p => p.name).join(', ');
+        configParts.push(`params: { ${reqKeys} }`);
       } else {
-        // 只有可选查询参数
-        configParts.push('params: params');
-      }
-    }
-    
-    // 构建最终的配置对象
-    let configStr = '';
-    if (configParts.length > 0) {
-      configStr = `{ ${configParts.join(', ')}, ...config }`;
-    } else {
-      configStr = 'config';
-    }
-
-    // 如果当前方法是不带独立 body 参数的类型（如 GET/DELETE），但存在请求体，则通过 config.data 发送
-    if (bodyParam && ['delete', 'get', 'head', 'options'].includes(method) && bodyArgName) {
-      // 将 body 插入到 configParts 的最前面，确保最终的 config 包含 data 字段
-      // 避免重复插入（如果已经存在 data 字段）
-      const alreadyHasData = configParts.some(p => /^data\s*:\s*/.test(p));
-      if (!alreadyHasData) {
-        configStr = `{ data: ${bodyArgName}${configParts.length > 0 ? ', ' : ''}${configParts.join(', ')}, ...config }`;
+        configParts.push('params');
       }
     }
 
-    // 根据 HTTP 方法构建正确的 axios 调用
+    const configStr = configParts.length > 0
+      ? `{ ${configParts.join(', ')}, ...config }`
+      : 'config';
+
+    // 生成 FormData 构建代码
+    if (bodyParam?.isFormData && bodyParam.formDataFields) {
+      lines.push(`    const formData = new FormData();`);
+      Object.entries(bodyParam.formDataFields).forEach(([fieldName, fieldInfo]) => {
+        if (fieldInfo.required) {
+          lines.push(`    formData.append('${fieldName}', ${fieldName} as any);`);
+        } else {
+          lines.push(`    if (${fieldName} !== undefined) {`);
+          if (fieldInfo.type.includes('[]')) {
+            lines.push(`      (${fieldName} as any[]).forEach(item => formData.append('${fieldName}', item));`);
+          } else {
+            lines.push(`      formData.append('${fieldName}', ${fieldName} as any);`);
+          }
+          lines.push(`    }`);
+        }
+      });
+    }
+
+    // 根据 HTTP 方法生成正确的 axios 调用
     if (['get', 'delete', 'head', 'options'].includes(method)) {
-      // GET/DELETE 等方法：axios.get(url, config)
-      lines.push(`    return this.${this.config.axiosInstance || 'apiClient'}.${method}(${requestParams[0]}, ${configStr});`);
+      lines.push(`    return ${axisInstance}.${method}(${urlStr}, ${configStr});`);
     } else {
-      // POST/PUT/PATCH 等方法：axios.post(url, data, config)
+      // POST/PUT/PATCH 等带 body 的方法
       if (bodyParam) {
-        lines.push(`    return this.${this.config.axiosInstance || 'apiClient'}.${method}(${requestParams[0]}, ${requestParams[1]}, ${configStr});`);
+        const bodyArg = bodyParam.isFormData ? 'formData' : 'data';
+        lines.push(`    return ${axisInstance}.${method}(${urlStr}, ${bodyArg}, ${configStr});`);
       } else {
-        // 没有请求体的 POST/PUT 请求
-        lines.push(`    return this.${this.config.axiosInstance || 'apiClient'}.${method}(${requestParams[0]}, null, ${configStr});`);
+        lines.push(`    return ${axisInstance}.${method}(${urlStr}, undefined, ${configStr});`);
       }
     }
+
     lines.push(`  };`);
-    
+    lines.push('');
+
     return lines;
   }
 
   private generateMethodName(endpoint: ApiEndpoint): string {
     if (endpoint.operationId) {
-      const sanitizedOperationId = this.sanitizeMethodName(endpoint.operationId);
-      return this.toCamelCase(sanitizedOperationId);
+      const sanitized = this.sanitizeMethodName(endpoint.operationId);
+      return this.toCamelCase(sanitized);
     }
-    
-    // 根据路径和方法生成方法名
-    const pathParts = endpoint.path.split('/').filter(part => part && !part.startsWith('{'));
+
+    // 无 operationId 时根据路径和方法生成
+    const pathParts = endpoint.path
+      .split('/')
+      .filter(part => part && !part.startsWith('{'));
     const lastPart = pathParts[pathParts.length - 1] || 'api';
     const method = endpoint.method.toLowerCase();
-    
-    return this.toCamelCase(`${method}_${lastPart}`);
+    const candidate = this.toCamelCase(`${method}_${lastPart}`);
+
+    // 确保唯一性
+    if (!this.usedMethodNames.has(candidate)) {
+      this.usedMethodNames.add(candidate);
+      return candidate;
+    }
+
+    let counter = 2;
+    while (this.usedMethodNames.has(`${candidate}${counter}`)) {
+      counter++;
+    }
+    const unique = `${candidate}${counter}`;
+    this.usedMethodNames.add(unique);
+    return unique;
   }
 
   /**
-   * 清理方法名，处理中文字符
+   * 清理方法名，使其符合 TypeScript 标识符规范
+   * 遇到不规范的名称时记录警告，不做静默的随机重命名
    */
   private sanitizeMethodName(name: string): string {
     if (!name) return 'unknownMethod';
 
-    // 检查是否包含中文字符
     const hasChinese = /[\u4e00-\u9fff]/.test(name);
-    
+    const nonChinesePart = name
+      .replace(/[\u4e00-\u9fff]/g, '')
+      .replace(/[^a-zA-Z0-9_]/g, '')
+      .replace(/^[0-9]+/, '');
+
+    let result: string;
+
     if (hasChinese) {
-       // 如果包含中文字符，随机生成英文方法名
-       return this.generateRandomEnglishMethodName();
-     }
+      if (nonChinesePart) {
+        result = nonChinesePart;
+      } else {
+        this.unknownMethodCounter++;
+        result = `method${this.unknownMethodCounter}`;
+      }
+      console.warn(`[Swagger 规范警告] operationId "${name}" 包含中文字符，不符合规范，已重命名为 "${result}"`);
+    } else {
+      const cleaned = name
+        .replace(/[^a-zA-Z0-9_]/g, '')
+        .replace(/^[0-9]+/, '');
 
-    // 如果不包含中文字符，进行基本的清理
-    let result = name
-      .replace(/[^a-zA-Z0-9_]/g, '') // 移除非字母数字下划线的字符
-      .replace(/^[0-9]+/, ''); // 移除开头的数字
-
-    result = result || 'unknownMethod';
-    
-    // 检查是否与已有方法名冲突
-    if (this.usedMethodNames.has(result)) {
-      let counter = 1;
-      const baseResult = result;
-      while (this.usedMethodNames.has(result)) {
-        result = baseResult + counter;
-        counter++;
+      if (!cleaned) {
+        this.unknownMethodCounter++;
+        result = `method${this.unknownMethodCounter}`;
+        console.warn(`[Swagger 规范警告] operationId "${name}" 清理后为空，已重命名为 "${result}"`);
+      } else {
+        result = cleaned;
       }
     }
-    
-    // 将方法名添加到已使用集合中
+
+    // 确保唯一性
+    if (this.usedMethodNames.has(result)) {
+      let counter = 2;
+      const base = result;
+      while (this.usedMethodNames.has(`${base}${counter}`)) {
+        counter++;
+      }
+      result = `${base}${counter}`;
+    }
+
     this.usedMethodNames.add(result);
     return result;
   }
 
-  private generateQueryParamsType(queryParams: any[]): string {
+  private generateQueryParamsType(queryParams: ApiParameter[]): string {
     const props = queryParams.map(param => {
       const optional = param.required ? '' : '?';
-      return `${param.name}${optional}: ${param.type}`;
+      const type = this.addTypesPrefix(param.type);
+      return `${param.name}${optional}: ${type}`;
     });
-    
     return `{ ${props.join('; ')} }`;
   }
 
@@ -541,73 +471,159 @@ export class TypeScriptGenerator {
       .replace(/^[A-Z]/, char => char.toLowerCase());
   }
 
+  /**
+   * 为自定义类型添加 Types. 前缀
+   * 支持联合类型（|）、交叉类型（&）、数组、泛型
+   */
   private addTypesPrefix(type: string): string {
-    // 基础类型不需要添加前缀
-    const basicTypes = ['string', 'number', 'boolean', 'any', 'void', 'object', 'unknown', 'File'];
-    // TypeScript 内置泛型类型
-    const builtinGenericTypes = ['Record', 'Partial', 'Required', 'Pick', 'Omit', 'Exclude', 'Extract', 'NonNullable', 'ReturnType', 'InstanceType', 'ThisType', 'Parameters', 'ConstructorParameters'];
-    
-    // 处理对象类型（如 { file: string }）
-    if (type.startsWith('{') && type.endsWith('}')) {
-      return type.replace(/:\s*File\b/g, ': File');
+    if (!type) return 'any';
+
+    const basicTypes = new Set([
+      'string', 'number', 'boolean', 'any', 'void', 'object',
+      'unknown', 'never', 'null', 'undefined', 'File', 'FormData',
+      'Blob', 'ArrayBuffer'
+    ]);
+    const builtinGenericTypes = new Set([
+      'Record', 'Partial', 'Required', 'Pick', 'Omit', 'Exclude',
+      'Extract', 'NonNullable', 'ReturnType', 'InstanceType', 'Parameters',
+      'ConstructorParameters', 'Awaited', 'Array', 'Promise', 'Map', 'Set'
+    ]);
+
+    // 联合类型：按 | 拆分处理（注意避免拆开泛型内部的 |）
+    if (this.hasTopLevelOperator(type, '|')) {
+      return type.split(/\s*\|\s*/)
+        .map(t => this.addTypesPrefix(t.trim()))
+        .join(' | ');
     }
-    
-    // 处理数组类型
+
+    // 交叉类型：按 & 拆分处理
+    if (this.hasTopLevelOperator(type, '&')) {
+      return type.split(/\s*&\s*/)
+        .map(t => this.addTypesPrefix(t.trim()))
+        .join(' & ');
+    }
+
+    // 带括号的类型（如 (A | B)[]）
+    if (type.startsWith('(') && type.includes(')')) {
+      const closeParen = type.lastIndexOf(')');
+      const inner = type.slice(1, closeParen);
+      const suffix = type.slice(closeParen + 1);
+      return `(${this.addTypesPrefix(inner)})${suffix}`;
+    }
+
+    // 数组类型
     if (type.endsWith('[]')) {
       const baseType = type.slice(0, -2);
-      
-      // 如果基础类型是基础类型，直接返回
-      if (basicTypes.includes(baseType)) {
-        return type;
-      }
-      
-      // 如果基础类型是内联对象类型（如 { ... }），直接返回
-      if (baseType.startsWith('{') && baseType.endsWith('}')) {
-        return type;
-      }
-      
-      // 递归处理基础类型，然后添加数组标记
-      const processedBaseType = this.addTypesPrefix(baseType);
-      return `${processedBaseType}[]`;
+      return `${this.addTypesPrefix(baseType)}[]`;
     }
-    
-    // 处理泛型类型
-    if (type.includes('<')) {
-      // 检查是否是内置泛型类型（如 Record<string, any>）
-      const genericTypeName = type.split('<')[0];
-      if (builtinGenericTypes.includes(genericTypeName)) {
-        return type; // 直接返回，不添加 Types. 前缀
-      }
-      
-      return type.replace(/([A-Z][a-zA-Z0-9]*)/g, (match) => {
-        if (basicTypes.includes(match) || builtinGenericTypes.includes(match)) {
-          return match;
-        }
-        return `Types.${match}`;
-      });
-    }
-    
-    // 基础类型直接返回
-    if (basicTypes.includes(type)) {
+
+    // 内联对象类型 { ... }
+    if (type.startsWith('{') && type.endsWith('}')) {
       return type;
     }
-    
-    // 自定义类型添加前缀
+
+    // 泛型类型 Generic<T>
+    if (type.includes('<')) {
+      const angleBracket = type.indexOf('<');
+      const genericName = type.slice(0, angleBracket);
+      const innerPart = type.slice(angleBracket + 1, type.lastIndexOf('>'));
+
+      const processedName = builtinGenericTypes.has(genericName) || basicTypes.has(genericName)
+        ? genericName
+        : `Types.${genericName}`;
+
+      // 用智能分割处理嵌套泛型（避免在 < > 内部切分）
+      const processedInner = this.splitGenericArgs(innerPart)
+        .map(t => this.addTypesPrefix(t.trim()))
+        .join(', ');
+
+      return `${processedName}<${processedInner}>`;
+    }
+
+    // 字符串字面量类型（如 'value1' | 'value2'）
+    if (type.startsWith("'") || type.startsWith('"')) {
+      return type;
+    }
+
+    // 数字字面量类型
+    if (/^-?\d/.test(type)) {
+      return type;
+    }
+
+    // 基础类型直接返回
+    if (basicTypes.has(type)) {
+      return type;
+    }
+
+    // 内置泛型基础名称直接返回
+    if (builtinGenericTypes.has(type)) {
+      return type;
+    }
+
+    // 自定义类型加前缀
     return `Types.${type}`;
   }
 
-  private async generateIndex(): Promise<void> {
-    const lines: string[] = [];
-    
-    lines.push('// 自动生成的入口文件');
-    lines.push('// 请勿手动修改此文件');
-    lines.push('');
-    lines.push('export * from \'./types\';');
-    
-    if (this.config.generateClient !== false) {
-      lines.push('export * from \'./api\';');
+  /**
+   * 智能分割泛型参数列表，正确处理嵌套泛型
+   * 例如 "string, Record<string, any>" → ["string", "Record<string, any>"]
+   */
+  private splitGenericArgs(args: string): string[] {
+    const parts: string[] = [];
+    let depth = 0;
+    let current = '';
+
+    for (let i = 0; i < args.length; i++) {
+      const ch = args[i];
+      if (ch === '<' || ch === '(' || ch === '{') {
+        depth++;
+        current += ch;
+      } else if (ch === '>' || ch === ')' || ch === '}') {
+        depth--;
+        current += ch;
+      } else if (ch === ',' && depth === 0) {
+        parts.push(current.trim());
+        current = '';
+      } else {
+        current += ch;
+      }
     }
-    
+
+    if (current.trim()) {
+      parts.push(current.trim());
+    }
+
+    return parts;
+  }
+
+  /**
+   * 检查字符串顶层（非泛型括号内）是否含有指定操作符
+   */
+  private hasTopLevelOperator(type: string, operator: string): boolean {
+    let depth = 0;
+    for (let i = 0; i < type.length; i++) {
+      const ch = type[i];
+      if (ch === '<' || ch === '(' || ch === '{') depth++;
+      else if (ch === '>' || ch === ')' || ch === '}') depth--;
+      else if (depth === 0 && type.slice(i).startsWith(` ${operator} `)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private async generateIndex(): Promise<void> {
+    const lines: string[] = [
+      '// 自动生成的入口文件',
+      '// 请勿手动修改此文件',
+      '',
+      "export * from './types';",
+    ];
+
+    if (this.config.generateClient !== false) {
+      lines.push("export * from './api';");
+    }
+
     const content = lines.join('\n');
     const filePath = path.join(this.config.output, 'index.ts');
     await fs.writeFile(filePath, content, 'utf-8');
