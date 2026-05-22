@@ -1,17 +1,24 @@
-import * as fs from 'fs-extra';
-import axios from 'axios';
+import { loadSpec } from './loadSpec';
+import {
+  FALLBACK_SCALAR_TYPE,
+  FALLBACK_ARRAY_TYPE,
+  LOOSE_OBJECT_TYPE
+} from './typeUtils';
 import {
   SwaggerSpec,
   SwaggerSchema,
   SwaggerOperation,
   SwaggerParameter,
+  SwaggerRequestBody,
+  SwaggerResponses,
   ApiEndpoint,
   ApiParameter,
   ApiRequestBody,
   ApiResponse,
   TypeDefinition,
   PropertyDefinition,
-  ValidationWarning
+  ValidationWarning,
+  ParserOptions
 } from './types';
 
 export class SwaggerParser {
@@ -23,44 +30,25 @@ export class SwaggerParser {
   private unknownTypeCounter = 0;
   private cachedEndpoints: ApiEndpoint[] | null = null;
   private cachedTypeDefinitions: TypeDefinition[] | null = null;
+  private silentWarnings: boolean;
+  private resolvingRefs: Set<string> = new Set();
 
-  constructor(spec: SwaggerSpec) {
+  constructor(spec: SwaggerSpec, options?: ParserOptions) {
     this.spec = spec;
+    this.silentWarnings = options?.silentWarnings ?? false;
     this.loadDefinitions();
   }
 
-  static async fromFile(filePath: string): Promise<SwaggerParser> {
-    const content = await fs.readFile(filePath, 'utf-8');
-    const spec = JSON.parse(content) as SwaggerSpec;
-    return new SwaggerParser(spec);
-  }
-
-  static async fromUrl(url: string): Promise<SwaggerParser> {
-    try {
-      const response = await axios.get(url, {
-        timeout: 10000,
-        headers: {
-          'Accept': 'application/json, application/yaml, text/yaml'
-        }
-      });
-      const spec = response.data as SwaggerSpec;
-      return new SwaggerParser(spec);
-    } catch (error) {
-      throw new Error(`Failed to fetch Swagger spec from URL: ${url}. Error: ${error}`);
-    }
-  }
-
-  static async fromInput(input: string): Promise<SwaggerParser> {
-    if (input.startsWith('http://') || input.startsWith('https://')) {
-      return this.fromUrl(input);
-    } else {
-      return this.fromFile(input);
-    }
+  static async fromInput(input: string, options?: ParserOptions): Promise<SwaggerParser> {
+    const spec = await loadSpec(input, { fetchTimeout: options?.fetchTimeout });
+    return new SwaggerParser(spec, options);
   }
 
   private addWarning(warning: ValidationWarning): void {
     this.warnings.push(warning);
-    console.warn(`[Swagger 规范警告] ${warning.location ? `[${warning.location}] ` : ''}${warning.message}`);
+    if (!this.silentWarnings) {
+      console.warn(`[Swagger 规范警告] ${warning.location ? `[${warning.location}] ` : ''}${warning.message}`);
+    }
   }
 
   getWarnings(): ValidationWarning[] {
@@ -153,6 +141,7 @@ export class SwaggerParser {
       operationId: operation.operationId,
       summary: operation.summary,
       description: operation.description,
+      deprecated: operation.deprecated,
       parameters,
       requestBody,
       responses,
@@ -193,7 +182,7 @@ export class SwaggerParser {
       } else {
         this.addWarning({
           type: 'missingField',
-          message: `参数 "${param.name}" 缺少 type 或 schema 字段，已回退为 any`,
+          message: `参数 "${param.name}" 缺少 type 或 schema 字段，已回退为 ${FALLBACK_SCALAR_TYPE}`,
           location
         });
         schema = { type: 'string' };
@@ -210,7 +199,7 @@ export class SwaggerParser {
   }
 
   private parseRequestBody(
-    requestBody?: any,
+    requestBody?: SwaggerRequestBody,
     allParameters?: SwaggerParameter[],
     location?: string
   ): ApiRequestBody | undefined {
@@ -221,7 +210,7 @@ export class SwaggerParser {
         if (!bodyParam.schema) {
           this.addWarning({
             type: 'missingField',
-            message: `body 参数 "${bodyParam.name}" 缺少 schema 字段，已回退为 any`,
+            message: `body 参数 "${bodyParam.name}" 缺少 schema 字段，已回退为 ${FALLBACK_SCALAR_TYPE}`,
             location
           });
         }
@@ -251,7 +240,7 @@ export class SwaggerParser {
           } else if (param.schema) {
             paramType = this.resolveType(param.schema, location);
           } else {
-            paramType = 'any';
+            paramType = FALLBACK_SCALAR_TYPE;
           }
 
           formDataFields[param.name] = {
@@ -284,17 +273,17 @@ export class SwaggerParser {
         return undefined;
       }
 
-      const contentType = contentTypes[0];
+      const contentType = this.pickPreferredContentType(contentTypes);
       const schema = requestBody.content[contentType]?.schema;
 
       if (!schema) {
         this.addWarning({
           type: 'missingField',
-          message: `requestBody content "${contentType}" 缺少 schema，已回退为 any`,
+          message: `requestBody content "${contentType}" 缺少 schema，已回退为 ${FALLBACK_SCALAR_TYPE}`,
           location
         });
         return {
-          type: 'any',
+          type: FALLBACK_SCALAR_TYPE,
           required: requestBody.required || false,
           description: requestBody.description,
           contentType
@@ -342,7 +331,7 @@ export class SwaggerParser {
     return undefined;
   }
 
-  private parseResponses(responses: any, location: string): ApiResponse[] {
+  private parseResponses(responses: SwaggerResponses | undefined, location: string): ApiResponse[] {
     if (!responses || Object.keys(responses).length === 0) {
       this.addWarning({
         type: 'missingField',
@@ -352,7 +341,7 @@ export class SwaggerParser {
       return [];
     }
 
-    return Object.entries(responses).map(([statusCode, response]: [string, any]) => {
+    return Object.entries(responses).map(([statusCode, response]) => {
       let type = 'void';
 
       // Swagger 2.0
@@ -364,7 +353,8 @@ export class SwaggerParser {
       if (response.content) {
         const contentTypes = Object.keys(response.content);
         if (contentTypes.length > 0) {
-          const schema = response.content[contentTypes[0]]?.schema;
+          const contentType = this.pickPreferredContentType(contentTypes);
+          const schema = response.content[contentType]?.schema;
           if (schema) {
             type = this.resolveType(schema, location);
           }
@@ -384,14 +374,14 @@ export class SwaggerParser {
    * 严格遵循 OpenAPI/Swagger 规范
    */
   resolveType(schema: SwaggerSchema, location?: string): string {
-    if (!schema) return 'any';
+    if (!schema) return FALLBACK_SCALAR_TYPE;
 
     // $ref 优先处理
     if (schema.$ref) {
       const refName = schema.$ref.split('/').pop();
       if (!refName) {
         this.addWarning({ type: 'invalidFormat', message: `无法解析 $ref: ${schema.$ref}`, location });
-        return 'any';
+        return FALLBACK_SCALAR_TYPE;
       }
       return this.sanitizeTypeName(refName);
     }
@@ -453,10 +443,10 @@ export class SwaggerParser {
         } else {
           this.addWarning({
             type: 'missingField',
-            message: `array 类型缺少 items 字段，已回退为 any[]`,
+            message: `array 类型缺少 items 字段，已回退为 ${FALLBACK_ARRAY_TYPE}`,
             location
           });
-          resolvedType = 'any[]';
+          resolvedType = FALLBACK_ARRAY_TYPE;
         }
         break;
 
@@ -472,20 +462,20 @@ export class SwaggerParser {
           } else if (schema.additionalProperties !== undefined) {
             resolvedType = this.resolveObjectType({ ...schema, type: 'object' }, location);
           } else {
-            resolvedType = 'any';
+            resolvedType = LOOSE_OBJECT_TYPE;
           }
         } else {
           this.addWarning({
             type: 'invalidFormat',
-            message: `未知的 schema type: "${schema.type}"，已回退为 any`,
+            message: `未知的 schema type: "${schema.type}"，已回退为 ${FALLBACK_SCALAR_TYPE}`,
             location
           });
-          resolvedType = 'any';
+          resolvedType = FALLBACK_SCALAR_TYPE;
         }
     }
 
     // nullable 处理（OpenAPI 3.0）
-    if (schema.nullable && resolvedType !== 'any') {
+    if (schema.nullable) {
       resolvedType = `${resolvedType} | null`;
     }
 
@@ -508,7 +498,7 @@ export class SwaggerParser {
 
     if (schema.additionalProperties !== undefined) {
       if (schema.additionalProperties === true) {
-        return 'Record<string, any>';
+        return LOOSE_OBJECT_TYPE;
       } else if (schema.additionalProperties === false) {
         return 'Record<string, never>';
       } else {
@@ -517,13 +507,14 @@ export class SwaggerParser {
       }
     }
 
-    return 'Record<string, any>';
+    return LOOSE_OBJECT_TYPE;
   }
 
   getTypeDefinitions(): TypeDefinition[] {
     if (this.cachedTypeDefinitions) return this.cachedTypeDefinitions;
 
     const types: TypeDefinition[] = [];
+    this.resolvingRefs.clear();
 
     this.definitions.forEach((schema, name) => {
       const type = this.generateTypeDefinition(name, schema);
@@ -537,6 +528,11 @@ export class SwaggerParser {
   }
 
   private generateTypeDefinition(name: string, schema: SwaggerSchema): TypeDefinition | null {
+    if (this.resolvingRefs.has(name)) {
+      return null;
+    }
+    this.resolvingRefs.add(name);
+
     const typeWarnings: string[] = [];
     const sanitizedName = this.sanitizeTypeName(name, typeWarnings);
     const location = `definition: ${name}`;
@@ -607,6 +603,21 @@ export class SwaggerParser {
       };
     }
 
+    // 空 schema（如 Java Object）→ 松散 object
+    if (
+      !schema.type &&
+      !schema.properties &&
+      schema.additionalProperties === undefined
+    ) {
+      return {
+        name: sanitizedName,
+        type: 'type',
+        aliasType: LOOSE_OBJECT_TYPE,
+        description: schema.description,
+        warnings: typeWarnings.length > 0 ? typeWarnings : undefined
+      };
+    }
+
     // object 类型（或无 type 但有 properties）
     if (schema.type === 'object' || schema.properties) {
       if (schema.properties && Object.keys(schema.properties).length > 0) {
@@ -665,14 +676,14 @@ export class SwaggerParser {
     }
 
     // 无任何类型信息
-    const warning = `类型 "${name}" 缺少类型信息，已回退为 any`;
+    const warning = `类型 "${name}" 缺少类型信息，已回退为 ${FALLBACK_SCALAR_TYPE}`;
     this.addWarning({ type: 'missingField', message: warning, location });
     typeWarnings.push(warning);
 
     return {
       name: sanitizedName,
       type: 'type',
-      aliasType: 'any',
+      aliasType: FALLBACK_SCALAR_TYPE,
       description: schema.description,
       warnings: typeWarnings.length > 0 ? typeWarnings : undefined
     };
@@ -765,5 +776,26 @@ export class SwaggerParser {
     const basePath = this.spec.basePath || '';
 
     return `${scheme}://${host}${basePath}`;
+  }
+
+  private pickPreferredContentType(contentTypes: string[]): string {
+    const preferred = [
+      'application/json',
+      'application/*+json',
+      'text/json',
+      'multipart/form-data',
+      'application/x-www-form-urlencoded'
+    ];
+
+    for (const type of preferred) {
+      const match = contentTypes.find(item =>
+        type.includes('*')
+          ? item.includes('json')
+          : item === type || item.startsWith(`${type};`)
+      );
+      if (match) return match;
+    }
+
+    return contentTypes[0];
   }
 }

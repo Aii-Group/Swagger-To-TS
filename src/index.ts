@@ -1,6 +1,17 @@
 import { SwaggerParser } from './parser';
 import { TypeScriptGenerator } from './generator';
-import { GeneratorConfig } from './types';
+import { filterEndpoints } from './endpointFilter';
+import { GeneratorConfig, ValidationWarning } from './types';
+
+function printWarningsSummary(warnings: ValidationWarning[]): void {
+  if (warnings.length === 0) return;
+
+  console.log(`\n⚠️  共 ${warnings.length} 条规范警告:`);
+  warnings.forEach((warning, index) => {
+    const location = warning.location ? `[${warning.location}] ` : '';
+    console.log(`  ${index + 1}. ${location}${warning.message}`);
+  });
+}
 
 /**
  * 从 Swagger/OpenAPI 规范生成 TypeScript 接口和 API 客户端
@@ -9,22 +20,24 @@ import { GeneratorConfig } from './types';
 export async function generateFromSwagger(config: GeneratorConfig): Promise<void> {
   try {
     console.log('🚀 开始解析 Swagger 文件...');
-    
-    // 解析 Swagger 文件（支持本地文件和 URL）
-    const parser = await SwaggerParser.fromInput(config.input);
-    const endpoints = parser.getApiEndpoints();
+
+    const parser = await SwaggerParser.fromInput(config.input, {
+      silentWarnings: config.silentWarnings ?? true,
+      fetchTimeout: config.fetchTimeout
+    });
+    const endpoints = filterEndpoints(parser.getApiEndpoints(), config);
     const types = parser.getTypeDefinitions();
-    
+
     console.log(`📋 发现 ${endpoints.length} 个 API 端点`);
     console.log(`📄 发现 ${types.length} 个类型定义`);
-    
-    // 生成 TypeScript 代码
+
     console.log('🔧 生成 TypeScript 代码...');
     const generator = new TypeScriptGenerator(config, parser);
-    
+
     await generator.generate();
-    
+
     console.log(`✅ 代码生成完成！输出目录: ${config.output}`);
+    printWarningsSummary(parser.getWarnings());
   } catch (error) {
     console.error('❌ 生成过程中出现错误:', error);
     throw error;
@@ -43,7 +56,8 @@ export function createDefaultConfig(input: string, output: string): GeneratorCon
     output,
     generateClient: true,
     typePrefix: '',
-    axiosInstance: 'apiClient'
+    axiosInstance: 'apiClient',
+    silentWarnings: true
   };
 }
 
@@ -51,6 +65,26 @@ export function createDefaultConfig(input: string, output: string): GeneratorCon
 export * from './types';
 export { SwaggerParser } from './parser';
 export { TypeScriptGenerator } from './generator';
+export { loadSpec, parseSpecContent, validateSpecStructure, isRemoteInput } from './loadSpec';
+export {
+  loadConfigFile,
+  loadConfigFiles,
+  normalizeConfigExport,
+  validateConfig,
+  expandConfigPaths,
+  getDefaultConfigTemplate,
+  renderConfigTemplate,
+  detectConfigFormat
+} from './loadConfig';
+export {
+  filterEndpoints,
+  getResponseWrapperField,
+  unwrapResponseType,
+  buildTagModuleMap,
+  createTagModuleIdentifiers,
+  matchPathPattern,
+  sanitizeTagFileName
+} from './endpointFilter';
 
 // 默认导出主函数
 export default generateFromSwagger;

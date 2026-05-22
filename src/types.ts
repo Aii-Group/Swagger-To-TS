@@ -45,6 +45,7 @@ export interface SwaggerOperation {
   summary?: string;
   description?: string;
   operationId?: string;
+  deprecated?: boolean;
   consumes?: string[];
   produces?: string[];
   parameters?: SwaggerParameter[];
@@ -138,6 +139,7 @@ export interface ApiEndpoint {
   operationId?: string;
   summary?: string;
   description?: string;
+  deprecated?: boolean;
   parameters: ApiParameter[];
   requestBody?: ApiRequestBody;
   responses: ApiResponse[];
@@ -186,18 +188,42 @@ export interface PropertyDefinition {
 
 // 拦截器类型定义
 export interface RequestInterceptor {
-  onFulfilled?: (config: any) => any | Promise<any>;
-  onRejected?: (error: any) => any;
+  onFulfilled?: (config: unknown) => unknown | Promise<unknown>;
+  onRejected?: (error: unknown) => unknown;
 }
 
 export interface ResponseInterceptor {
-  onFulfilled?: (response: any) => any | Promise<any>;
-  onRejected?: (error: any) => any;
+  onFulfilled?: (response: unknown) => unknown | Promise<unknown>;
+  onRejected?: (error: unknown) => unknown;
 }
 
 export interface InterceptorConfig {
   request?: RequestInterceptor;
   response?: ResponseInterceptor;
+}
+
+/** JSON 配置文件中 interceptors 函数字符串（生成时嵌入代码） */
+export interface InterceptorConfigStrings {
+  request?: {
+    onFulfilled?: string;
+    onRejected?: string;
+  };
+  response?: {
+    onFulfilled?: string;
+    onRejected?: string;
+  };
+}
+
+export interface ResponseWrapperConfig {
+  /** 响应体中数据字段名，默认 data */
+  field?: string;
+}
+
+export interface ParserOptions {
+  /** 为 true 时不立即打印警告，由调用方汇总输出 */
+  silentWarnings?: boolean;
+  /** 远程 URL 拉取超时（毫秒），默认 30000 */
+  fetchTimeout?: number;
 }
 
 // 生成配置
@@ -208,5 +234,19 @@ export interface GeneratorConfig {
   axiosInstance?: string;
   typePrefix?: string;
   generateClient?: boolean;
-  interceptors?: InterceptorConfig;
+  interceptors?: InterceptorConfigStrings;
+  /** 解包统一响应结构，如 { code, data, message } */
+  responseWrapper?: ResponseWrapperConfig | boolean;
+  /** 只生成指定 tag 的端点 */
+  filterTags?: string[];
+  /** 只生成路径匹配的端点，支持 * 通配 */
+  filterPaths?: string[];
+  /** 排除 deprecated 端点 */
+  excludeDeprecated?: boolean;
+  /** 按 tag 拆分为 modules/*.ts */
+  splitByTag?: boolean;
+  /** 不立即打印规范警告 */
+  silentWarnings?: boolean;
+  /** 远程 URL 拉取超时（毫秒），默认 30000 */
+  fetchTimeout?: number;
 }

@@ -7,12 +7,33 @@ import {
   GeneratorConfig
 } from './types';
 import { SwaggerParser } from './parser';
+import {
+  filterEndpoints,
+  getResponseWrapperField,
+  buildTagModuleMap,
+  TagModuleIdentifiers,
+  unwrapResponseType
+} from './endpointFilter';
+import { FALLBACK_SCALAR_TYPE } from './typeUtils';
+
+const BASIC_TYPES = new Set([
+  'string', 'number', 'boolean', 'any', 'void', 'object',
+  'unknown', 'never', 'null', 'undefined', 'File', 'FormData',
+  'Blob', 'ArrayBuffer'
+]);
+
+const BUILTIN_GENERIC_TYPES = new Set([
+  'Record', 'Partial', 'Required', 'Pick', 'Omit', 'Exclude',
+  'Extract', 'NonNullable', 'ReturnType', 'InstanceType', 'Parameters',
+  'ConstructorParameters', 'Awaited', 'Array', 'Promise', 'Map', 'Set'
+]);
 
 export class TypeScriptGenerator {
   private config: GeneratorConfig;
   private parser: SwaggerParser;
   private usedMethodNames: Set<string> = new Set();
   private unknownMethodCounter = 0;
+  private cachedTagModuleMap: Map<string, TagModuleIdentifiers> | null = null;
 
   constructor(config: GeneratorConfig, parser: SwaggerParser) {
     this.config = config;
@@ -23,11 +44,26 @@ export class TypeScriptGenerator {
     await fs.ensureDir(this.config.output);
     await this.generateTypes();
 
+    const modulesDir = path.join(this.config.output, 'modules');
+
     if (this.config.generateClient !== false) {
-      await this.generateApiClient();
+      if (this.config.splitByTag) {
+        await this.generateSplitApiClient();
+      } else {
+        if (await fs.pathExists(modulesDir)) {
+          await fs.remove(modulesDir);
+        }
+        await this.generateApiClient();
+      }
+    } else if (await fs.pathExists(modulesDir)) {
+      await fs.remove(modulesDir);
     }
 
     await this.generateIndex();
+  }
+
+  private getFilteredEndpoints(): ApiEndpoint[] {
+    return filterEndpoints(this.parser.getApiEndpoints(), this.config);
   }
 
   private async generateTypes(): Promise<void> {
@@ -37,18 +73,25 @@ export class TypeScriptGenerator {
     await fs.writeFile(filePath, content, 'utf-8');
   }
 
+  private getExportedTypeName(name: string): string {
+    const prefix = this.config.typePrefix || '';
+    return `${prefix}${name}`;
+  }
+
   private generateTypesContent(typeDefinitions: TypeDefinition[]): string {
     const lines: string[] = [];
 
     lines.push('// 自动生成的类型定义文件');
     lines.push('// 请勿手动修改此文件');
     lines.push('');
+    lines.push("import type { AxiosResponse, InternalAxiosRequestConfig } from 'axios';");
+    lines.push('');
 
-    lines.push('export interface ApiResponse<T = any> {');
+    lines.push('export interface ApiResponse<T = unknown> {');
     lines.push('  data: T;');
     lines.push('  status: number;');
     lines.push('  statusText: string;');
-    lines.push('  headers: any;');
+    lines.push('  headers: Record<string, unknown>;');
     lines.push('}');
     lines.push('');
 
@@ -60,13 +103,22 @@ export class TypeScriptGenerator {
     lines.push('');
 
     lines.push('export interface RequestInterceptor {');
-    lines.push('  onFulfilled?: (config: any) => any | Promise<any>;');
-    lines.push('  onRejected?: (error: any) => any;');
+    lines.push('  onFulfilled?: (');
+    lines.push('    config: InternalAxiosRequestConfig');
+    lines.push('  ) => InternalAxiosRequestConfig | Promise<InternalAxiosRequestConfig>;');
+    lines.push('  onRejected?: (error: unknown) => unknown;');
     lines.push('}');
     lines.push('');
     lines.push('export interface ResponseInterceptor {');
-    lines.push('  onFulfilled?: (response: any) => any | Promise<any>;');
-    lines.push('  onRejected?: (error: any) => any;');
+    lines.push('  onFulfilled?: (response: AxiosResponse) => unknown | Promise<unknown>;');
+    lines.push('  onRejected?: (error: unknown) => unknown;');
+    lines.push('}');
+    lines.push('');
+    lines.push('export interface RawResponseInterceptor {');
+    lines.push('  onFulfilled?: (');
+    lines.push('    response: AxiosResponse');
+    lines.push('  ) => AxiosResponse | Promise<AxiosResponse>;');
+    lines.push('  onRejected?: (error: unknown) => unknown;');
     lines.push('}');
     lines.push('');
     lines.push('export interface InterceptorConfig {');
@@ -80,8 +132,7 @@ export class TypeScriptGenerator {
         lines.push(`/** ${typeDef.description} */`);
       }
 
-      const prefix = this.config.typePrefix || '';
-      const typeName = `${prefix}${typeDef.name}`;
+      const typeName = this.getExportedTypeName(typeDef.name);
 
       // types.ts 中所有类型在同一文件，直接使用裸类型名（不加 Types. 前缀）
       if (typeDef.type === 'interface' && typeDef.properties) {
@@ -97,9 +148,9 @@ export class TypeScriptGenerator {
       } else if (typeDef.type === 'enum' && typeDef.enumValues && typeDef.enumValues.length > 0) {
         lines.push(`export type ${typeName} = ${typeDef.enumValues.join(' | ')};`);
       } else if (typeDef.type === 'type') {
-        lines.push(`export type ${typeName} = ${typeDef.aliasType || 'any'};`);
+        lines.push(`export type ${typeName} = ${typeDef.aliasType || FALLBACK_SCALAR_TYPE};`);
       } else {
-        lines.push(`export type ${typeName} = any;`);
+        lines.push(`export type ${typeName} = ${FALLBACK_SCALAR_TYPE};`);
       }
 
       lines.push('');
@@ -109,10 +160,42 @@ export class TypeScriptGenerator {
   }
 
   private async generateApiClient(): Promise<void> {
-    const endpoints = this.parser.getApiEndpoints();
+    const endpoints = this.getFilteredEndpoints();
     const content = this.generateApiClientContent(endpoints);
     const filePath = path.join(this.config.output, 'api.ts');
     await fs.writeFile(filePath, content, 'utf-8');
+  }
+
+  private async generateSplitApiClient(): Promise<void> {
+    const endpoints = this.getFilteredEndpoints();
+    const grouped = this.groupEndpointsByTag(endpoints);
+    const modulesDir = path.join(this.config.output, 'modules');
+    await fs.ensureDir(modulesDir);
+
+    const moduleExports: TagModuleIdentifiers[] = [];
+    const tagModuleMap = buildTagModuleMap(Object.keys(grouped));
+    this.cachedTagModuleMap = tagModuleMap;
+
+    for (const [tag, tagEndpoints] of Object.entries(grouped)) {
+      this.usedMethodNames = new Set();
+      this.unknownMethodCounter = 0;
+
+      const identifiers = tagModuleMap.get(tag)!;
+      const moduleContent = this.generateTagModuleContent(
+        identifiers.className,
+        tagEndpoints,
+        tag
+      );
+      await fs.writeFile(
+        path.join(modulesDir, `${identifiers.fileName}.ts`),
+        moduleContent,
+        'utf-8'
+      );
+      moduleExports.push(identifiers);
+    }
+
+    const apiContent = this.generateSplitApiClientContent(moduleExports);
+    await fs.writeFile(path.join(this.config.output, 'api.ts'), apiContent, 'utf-8');
   }
 
   private generateApiClientContent(endpoints: ApiEndpoint[]): string {
@@ -121,7 +204,7 @@ export class TypeScriptGenerator {
     lines.push('// 自动生成的 API 客户端文件');
     lines.push('// 请勿手动修改此文件');
     lines.push('');
-    lines.push('import axios, { AxiosInstance, AxiosRequestConfig } from \'axios\';');
+    lines.push('import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, InternalAxiosRequestConfig } from \'axios\';');
     lines.push('import * as Types from \'./types\';');
     lines.push('');
     lines.push('export interface ApiClientConfig extends AxiosRequestConfig {');
@@ -132,6 +215,12 @@ export class TypeScriptGenerator {
 
     const instanceName = this.config.axiosInstance || 'apiClient';
     const baseURL = this.config.baseURL || this.parser.getBaseUrl();
+    const defaultInterceptors = this.generateDefaultInterceptorsBlock();
+
+    if (defaultInterceptors.length > 0) {
+      lines.push(...defaultInterceptors);
+      lines.push('');
+    }
 
     lines.push(`export class ApiClient {`);
     lines.push(`  private ${instanceName}: AxiosInstance;`);
@@ -146,48 +235,13 @@ export class TypeScriptGenerator {
     lines.push(`      ...axiosConfig,`);
     lines.push(`    });`);
     lines.push('');
-    lines.push(`    this.setupInterceptors(interceptors);`);
+    lines.push(`    this.setupInterceptors(interceptors${defaultInterceptors.length > 0 ? ' || defaultInterceptors' : ''});`);
     lines.push(`  }`);
     lines.push('');
-    lines.push(`  private setupInterceptors(interceptors?: Types.InterceptorConfig) {`);
-    lines.push(`    const reqFulfilled = interceptors?.request?.onFulfilled || ((config: any) => config);`);
-    lines.push(`    const reqRejected = interceptors?.request?.onRejected || ((error: any) => Promise.reject(error));`);
-    lines.push(`    this.${instanceName}.interceptors.request.use(reqFulfilled, reqRejected);`);
-    lines.push('');
-    lines.push(`    const resFulfilled = interceptors?.response?.onFulfilled || ((response: any) => response.data);`);
-    lines.push(`    const resRejected = interceptors?.response?.onRejected || ((error: any) => {`);
-    lines.push(`      const apiError: Types.ApiError = {`);
-    lines.push(`        message: error.message,`);
-    lines.push(`        status: error.response?.status,`);
-    lines.push(`        code: error.code,`);
-    lines.push(`      };`);
-    lines.push(`      return Promise.reject(apiError);`);
-    lines.push(`    });`);
-    lines.push(`    this.${instanceName}.interceptors.response.use(resFulfilled, resRejected);`);
-    lines.push(`  }`);
-    lines.push('');
-    lines.push(`  setRequestInterceptor(interceptor: Types.RequestInterceptor) {`);
-    lines.push(`    this.${instanceName}.interceptors.request.use(`);
-    lines.push(`      interceptor.onFulfilled || ((config: any) => config),`);
-    lines.push(`      interceptor.onRejected || ((error: any) => Promise.reject(error))`);
-    lines.push(`    );`);
-    lines.push(`  }`);
-    lines.push('');
-    lines.push(`  setResponseInterceptor(interceptor: Types.ResponseInterceptor) {`);
-    lines.push(`    this.${instanceName}.interceptors.response.use(`);
-    lines.push(`      interceptor.onFulfilled || ((response: any) => response),`);
-    lines.push(`      interceptor.onRejected || ((error: any) => Promise.reject(error))`);
-    lines.push(`    );`);
-    lines.push(`  }`);
-    lines.push('');
-    lines.push(`  clearInterceptors() {`);
-    lines.push(`    this.${instanceName}.interceptors.request.clear();`);
-    lines.push(`    this.${instanceName}.interceptors.response.clear();`);
-    lines.push(`    this.setupInterceptors();`);
-    lines.push(`  }`);
-    lines.push('');
+    lines.push(...this.generateInterceptorMethods(instanceName));
 
     const groupedEndpoints = this.groupEndpointsByTag(endpoints);
+    const axiosRef = `this.${instanceName}`;
 
     Object.entries(groupedEndpoints).forEach(([tag, tagEndpoints]) => {
       if (tag && tag !== 'default') {
@@ -195,8 +249,7 @@ export class TypeScriptGenerator {
       }
 
       tagEndpoints.forEach(endpoint => {
-        const methodContent = this.generateEndpointMethod(endpoint);
-        lines.push(...methodContent);
+        lines.push(...this.generateEndpointMethod(endpoint, axiosRef));
       });
 
       lines.push('');
@@ -204,11 +257,188 @@ export class TypeScriptGenerator {
 
     lines.push('}');
     lines.push('');
-    lines.push(`export const apiClient = new ApiClient();`);
+    lines.push(`export const apiClient = new ApiClient(${defaultInterceptors.length > 0 ? '{ interceptors: defaultInterceptors }' : ''});`);
     lines.push('');
     lines.push('export default apiClient;');
 
     return lines.join('\n');
+  }
+
+  private generateSplitApiClientContent(modules: TagModuleIdentifiers[]): string {
+    const lines: string[] = [];
+
+    lines.push('// 自动生成的 API 客户端文件');
+    lines.push('// 请勿手动修改此文件');
+    lines.push('');
+    lines.push('import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, InternalAxiosRequestConfig } from \'axios\';');
+    lines.push('import * as Types from \'./types\';');
+
+    modules.forEach(module => {
+      lines.push(`import { ${module.className} } from './modules/${module.fileName}';`);
+    });
+
+    lines.push('');
+    lines.push('export interface ApiClientConfig extends AxiosRequestConfig {');
+    lines.push('  baseURL?: string;');
+    lines.push('  interceptors?: Types.InterceptorConfig;');
+    lines.push('}');
+    lines.push('');
+
+    const instanceName = this.config.axiosInstance || 'apiClient';
+    const baseURL = this.config.baseURL || this.parser.getBaseUrl();
+    const defaultInterceptors = this.generateDefaultInterceptorsBlock();
+
+    if (defaultInterceptors.length > 0) {
+      lines.push(...defaultInterceptors);
+      lines.push('');
+    }
+
+    lines.push('export class ApiClient {');
+    lines.push(`  private ${instanceName}: AxiosInstance;`);
+    lines.push('');
+
+    modules.forEach(module => {
+      if (module.originalTag !== module.fileName) {
+        lines.push(`  /** Tag: ${module.originalTag} */`);
+      }
+      lines.push(`  readonly ${module.propertyName}: ${module.className};`);
+    });
+
+    lines.push('');
+    lines.push('  constructor(config: ApiClientConfig = {}) {');
+    lines.push(`    const { baseURL = '${baseURL}', interceptors, ...axiosConfig } = config;`);
+    lines.push('');
+    lines.push(`    this.${instanceName} = axios.create({`);
+    lines.push('      baseURL,');
+    lines.push('      timeout: 10000,');
+    lines.push(`      headers: { 'Content-Type': 'application/json' },`);
+    lines.push('      ...axiosConfig,');
+    lines.push('    });');
+    lines.push('');
+    lines.push(`    this.setupInterceptors(interceptors${defaultInterceptors.length > 0 ? ' || defaultInterceptors' : ''});`);
+    lines.push('');
+
+    modules.forEach(module => {
+      lines.push(`    this.${module.propertyName} = new ${module.className}(this.${instanceName});`);
+    });
+
+    lines.push('  }');
+    lines.push('');
+    lines.push(...this.generateInterceptorMethods(instanceName));
+    lines.push('}');
+    lines.push('');
+    lines.push(`export const apiClient = new ApiClient(${defaultInterceptors.length > 0 ? '{ interceptors: defaultInterceptors }' : ''});`);
+    lines.push('');
+    lines.push('export default apiClient;');
+
+    return lines.join('\n');
+  }
+
+  private generateTagModuleContent(className: string, endpoints: ApiEndpoint[], tag: string): string {
+    const lines: string[] = [];
+
+    lines.push('// 自动生成的 API 模块文件');
+    lines.push('// 请勿手动修改此文件');
+    lines.push('');
+    lines.push('import { AxiosInstance, AxiosRequestConfig } from \'axios\';');
+    lines.push('import * as Types from \'../types\';');
+    lines.push('');
+    lines.push(`export class ${className} {`);
+    lines.push('  constructor(private client: AxiosInstance) {}');
+    lines.push('');
+
+    if (tag && tag !== 'default') {
+      lines.push(`  // ── ${tag} ──`);
+    }
+
+    endpoints.forEach(endpoint => {
+      lines.push(...this.generateEndpointMethod(endpoint, 'this.client'));
+    });
+
+    lines.push('}');
+    return lines.join('\n');
+  }
+
+  private generateInterceptorMethods(instanceName: string): string[] {
+    const wrapperField = getResponseWrapperField(this.config);
+    const defaultResponseTransform = wrapperField
+      ? `(response: AxiosResponse) => { const body = response.data; return (body as Record<string, unknown>)?.${wrapperField} ?? body; }`
+      : '(response: AxiosResponse) => response.data';
+
+    return [
+      '  private setupInterceptors(interceptors?: Types.InterceptorConfig) {',
+      '    const reqFulfilled = interceptors?.request?.onFulfilled ?? ((config: InternalAxiosRequestConfig) => config);',
+      '    const reqRejected = interceptors?.request?.onRejected ?? ((error: unknown) => Promise.reject(error));',
+      `    this.${instanceName}.interceptors.request.use(reqFulfilled, reqRejected);`,
+      '',
+      `    const resFulfilled = interceptors?.response?.onFulfilled ?? (${defaultResponseTransform});`,
+      '    const resRejected = interceptors?.response?.onRejected ?? ((error: unknown) => {',
+      '      const apiError: Types.ApiError = {',
+      '        message: (error as Error).message,',
+      '        status: (error as { response?: { status?: number } }).response?.status,',
+      '        code: (error as { code?: string }).code,',
+      '      };',
+      '      return Promise.reject(apiError);',
+      '    });',
+      `    this.${instanceName}.interceptors.response.use(`,
+      '      resFulfilled as (response: AxiosResponse) => AxiosResponse | Promise<AxiosResponse>,',
+      '      resRejected',
+      '    );',
+      '  }',
+      '',
+      '  setRequestInterceptor(interceptor: Types.RequestInterceptor) {',
+      `    this.${instanceName}.interceptors.request.use(`,
+      '      interceptor.onFulfilled ?? ((config: InternalAxiosRequestConfig) => config),',
+      '      interceptor.onRejected ?? ((error: unknown) => Promise.reject(error))',
+      '    );',
+      '  }',
+      '',
+      '  setResponseInterceptor(interceptor: Types.RawResponseInterceptor) {',
+      `    this.${instanceName}.interceptors.response.use(`,
+      '      interceptor.onFulfilled ?? ((response: AxiosResponse) => response),',
+      '      interceptor.onRejected ?? ((error: unknown) => Promise.reject(error))',
+      '    );',
+      '  }',
+      '',
+      '  clearInterceptors() {',
+      `    this.${instanceName}.interceptors.request.clear();`,
+      `    this.${instanceName}.interceptors.response.clear();`,
+      '    this.setupInterceptors();',
+      '  }',
+      ''
+    ];
+  }
+
+  private generateDefaultInterceptorsBlock(): string[] {
+    const interceptors = this.config.interceptors;
+    if (!interceptors) return [];
+
+    const lines = ['const defaultInterceptors: Types.InterceptorConfig = {'];
+
+    if (interceptors.request?.onFulfilled || interceptors.request?.onRejected) {
+      lines.push('  request: {');
+      if (interceptors.request.onFulfilled) {
+        lines.push(`    onFulfilled: ${interceptors.request.onFulfilled},`);
+      }
+      if (interceptors.request.onRejected) {
+        lines.push(`    onRejected: ${interceptors.request.onRejected},`);
+      }
+      lines.push('  },');
+    }
+
+    if (interceptors.response?.onFulfilled || interceptors.response?.onRejected) {
+      lines.push('  response: {');
+      if (interceptors.response.onFulfilled) {
+        lines.push(`    onFulfilled: ${interceptors.response.onFulfilled},`);
+      }
+      if (interceptors.response.onRejected) {
+        lines.push(`    onRejected: ${interceptors.response.onRejected},`);
+      }
+      lines.push('  },');
+    }
+
+    lines.push('};');
+    return lines;
   }
 
   private groupEndpointsByTag(endpoints: ApiEndpoint[]): Record<string, ApiEndpoint[]> {
@@ -225,7 +455,7 @@ export class TypeScriptGenerator {
     return grouped;
   }
 
-  private generateEndpointMethod(endpoint: ApiEndpoint): string[] {
+  private generateEndpointMethod(endpoint: ApiEndpoint, axiosRef: string): string[] {
     const lines: string[] = [];
     const methodName = this.generateMethodName(endpoint);
 
@@ -286,10 +516,16 @@ export class TypeScriptGenerator {
     const params = [...requiredParams, ...optionalParams];
 
     const successResponse = endpoint.responses.find(r => r.statusCode.startsWith('2'));
-    const returnType = successResponse ? this.addTypesPrefix(successResponse.type) : 'any';
+    let returnType = successResponse ? this.addTypesPrefix(successResponse.type) : FALLBACK_SCALAR_TYPE;
 
-    // JSDoc 注释
-    const hasDoc = endpoint.summary || endpoint.description;
+    const wrapperField = getResponseWrapperField(this.config);
+    if (wrapperField && successResponse) {
+      returnType = this.addTypesPrefix(
+        unwrapResponseType(successResponse.type, wrapperField, this.parser.getTypeDefinitions())
+      );
+    }
+
+    const hasDoc = endpoint.summary || endpoint.description || endpoint.deprecated;
     if (hasDoc) {
       lines.push(`  /**`);
       if (endpoint.summary) {
@@ -298,12 +534,15 @@ export class TypeScriptGenerator {
       if (endpoint.description && endpoint.description !== endpoint.summary) {
         lines.push(`   * ${endpoint.description}`);
       }
+      if (endpoint.deprecated) {
+        lines.push(`   * @deprecated`);
+      }
       lines.push(`   * @route ${endpoint.method} ${endpoint.path}`);
       lines.push(`   */`);
     }
 
     const paramsStr = params.join(', ');
-    lines.push(`  ${methodName} = async (${paramsStr}): Promise<${returnType}> => {`);
+    lines.push(`  async ${methodName}(${paramsStr}): Promise<${returnType}> {`);
 
     // 构建 URL
     let url = endpoint.path;
@@ -313,7 +552,6 @@ export class TypeScriptGenerator {
 
     const hasPathParams = pathParams.length > 0;
     const urlStr = hasPathParams ? `\`${url}\`` : `'${url}'`;
-    const axisInstance = `this.${this.config.axiosInstance || 'apiClient'}`;
     const method = endpoint.method.toLowerCase();
 
     // 构建 config 对象
@@ -364,18 +602,17 @@ export class TypeScriptGenerator {
 
     // 根据 HTTP 方法生成正确的 axios 调用
     if (['get', 'delete', 'head', 'options'].includes(method)) {
-      lines.push(`    return ${axisInstance}.${method}(${urlStr}, ${configStr});`);
+      lines.push(`    return ${axiosRef}.${method}(${urlStr}, ${configStr});`);
     } else {
-      // POST/PUT/PATCH 等带 body 的方法
       if (bodyParam) {
         const bodyArg = bodyParam.isFormData ? 'formData' : 'data';
-        lines.push(`    return ${axisInstance}.${method}(${urlStr}, ${bodyArg}, ${configStr});`);
+        lines.push(`    return ${axiosRef}.${method}(${urlStr}, ${bodyArg}, ${configStr});`);
       } else {
-        lines.push(`    return ${axisInstance}.${method}(${urlStr}, undefined, ${configStr});`);
+        lines.push(`    return ${axiosRef}.${method}(${urlStr}, undefined, ${configStr});`);
       }
     }
 
-    lines.push(`  };`);
+    lines.push(`  }`);
     lines.push('');
 
     return lines;
@@ -414,6 +651,12 @@ export class TypeScriptGenerator {
    * 清理方法名，使其符合 TypeScript 标识符规范
    * 遇到不规范的名称时记录警告，不做静默的随机重命名
    */
+  private warn(message: string): void {
+    if (!this.config.silentWarnings) {
+      console.warn(message);
+    }
+  }
+
   private sanitizeMethodName(name: string): string {
     if (!name) return 'unknownMethod';
 
@@ -432,7 +675,7 @@ export class TypeScriptGenerator {
         this.unknownMethodCounter++;
         result = `method${this.unknownMethodCounter}`;
       }
-      console.warn(`[Swagger 规范警告] operationId "${name}" 包含中文字符，不符合规范，已重命名为 "${result}"`);
+      this.warn(`[Swagger 规范警告] operationId "${name}" 包含中文字符，不符合规范，已重命名为 "${result}"`);
     } else {
       const cleaned = name
         .replace(/[^a-zA-Z0-9_]/g, '')
@@ -441,7 +684,7 @@ export class TypeScriptGenerator {
       if (!cleaned) {
         this.unknownMethodCounter++;
         result = `method${this.unknownMethodCounter}`;
-        console.warn(`[Swagger 规范警告] operationId "${name}" 清理后为空，已重命名为 "${result}"`);
+        this.warn(`[Swagger 规范警告] operationId "${name}" 清理后为空，已重命名为 "${result}"`);
       } else {
         result = cleaned;
       }
@@ -481,29 +724,18 @@ export class TypeScriptGenerator {
    * 支持联合类型（|）、交叉类型（&）、数组、泛型
    */
   private addTypesPrefix(type: string): string {
-    if (!type) return 'any';
+    if (!type) return FALLBACK_SCALAR_TYPE;
 
-    const basicTypes = new Set([
-      'string', 'number', 'boolean', 'any', 'void', 'object',
-      'unknown', 'never', 'null', 'undefined', 'File', 'FormData',
-      'Blob', 'ArrayBuffer'
-    ]);
-    const builtinGenericTypes = new Set([
-      'Record', 'Partial', 'Required', 'Pick', 'Omit', 'Exclude',
-      'Extract', 'NonNullable', 'ReturnType', 'InstanceType', 'Parameters',
-      'ConstructorParameters', 'Awaited', 'Array', 'Promise', 'Map', 'Set'
-    ]);
-
-    // 联合类型：按 | 拆分处理（注意避免拆开泛型内部的 |）
+    // 联合类型：深度感知分割
     if (this.hasTopLevelOperator(type, '|')) {
-      return type.split(/\s*\|\s*/)
+      return this.splitTopLevel(type, '|')
         .map(t => this.addTypesPrefix(t.trim()))
         .join(' | ');
     }
 
-    // 交叉类型：按 & 拆分处理
+    // 交叉类型：深度感知分割
     if (this.hasTopLevelOperator(type, '&')) {
-      return type.split(/\s*&\s*/)
+      return this.splitTopLevel(type, '&')
         .map(t => this.addTypesPrefix(t.trim()))
         .join(' & ');
     }
@@ -533,11 +765,10 @@ export class TypeScriptGenerator {
       const genericName = type.slice(0, angleBracket);
       const innerPart = type.slice(angleBracket + 1, type.lastIndexOf('>'));
 
-      const processedName = builtinGenericTypes.has(genericName) || basicTypes.has(genericName)
+      const processedName = BUILTIN_GENERIC_TYPES.has(genericName) || BASIC_TYPES.has(genericName)
         ? genericName
-        : `Types.${genericName}`;
+        : `Types.${this.getExportedTypeName(genericName)}`;
 
-      // 用智能分割处理嵌套泛型（避免在 < > 内部切分）
       const processedInner = this.splitGenericArgs(innerPart)
         .map(t => this.addTypesPrefix(t.trim()))
         .join(', ');
@@ -556,17 +787,50 @@ export class TypeScriptGenerator {
     }
 
     // 基础类型直接返回
-    if (basicTypes.has(type)) {
+    if (BASIC_TYPES.has(type)) {
       return type;
     }
 
     // 内置泛型基础名称直接返回
-    if (builtinGenericTypes.has(type)) {
+    if (BUILTIN_GENERIC_TYPES.has(type)) {
       return type;
     }
 
-    // 自定义类型加前缀
-    return `Types.${type}`;
+    // 自定义类型加 Types. 前缀与 typePrefix
+    return `Types.${this.getExportedTypeName(type)}`;
+  }
+
+  /**
+   * 深度感知分割：按顶层操作符（| 或 &）切分，不切开嵌套括号内的同名操作符
+   */
+  private splitTopLevel(type: string, operator: string): string[] {
+    const parts: string[] = [];
+    let depth = 0;
+    let current = '';
+    const sep = ` ${operator} `;
+
+    for (let i = 0; i < type.length; i++) {
+      const ch = type[i];
+      if (ch === '<' || ch === '(' || ch === '{') {
+        depth++;
+        current += ch;
+      } else if (ch === '>' || ch === ')' || ch === '}') {
+        depth--;
+        current += ch;
+      } else if (depth === 0 && type.slice(i, i + sep.length) === sep) {
+        parts.push(current.trim());
+        current = '';
+        i += sep.length - 1;
+      } else {
+        current += ch;
+      }
+    }
+
+    if (current.trim()) {
+      parts.push(current.trim());
+    }
+
+    return parts;
   }
 
   /**
@@ -627,6 +891,12 @@ export class TypeScriptGenerator {
 
     if (this.config.generateClient !== false) {
       lines.push("export * from './api';");
+
+      if (this.config.splitByTag && this.cachedTagModuleMap) {
+        this.cachedTagModuleMap.forEach(identifiers => {
+          lines.push(`export * from './modules/${identifiers.fileName}';`);
+        });
+      }
     }
 
     const content = lines.join('\n');

@@ -1,7 +1,6 @@
 import { SwaggerParser } from '../parser';
 import { SwaggerSpec } from '../types';
 
-// 测试用的简单 Swagger 规范
 const mockSwaggerSpec: SwaggerSpec = {
   swagger: '2.0',
   info: {
@@ -117,24 +116,21 @@ describe('SwaggerParser', () => {
   describe('getApiEndpoints', () => {
     it('should parse API endpoints correctly', () => {
       const endpoints = parser.getApiEndpoints();
-      
+
       expect(endpoints).toHaveLength(3);
-      
-      // 检查 GET /users
+
       const getUsersEndpoint = endpoints.find(e => e.path === '/users' && e.method === 'GET');
       expect(getUsersEndpoint).toBeDefined();
       expect(getUsersEndpoint?.operationId).toBe('getUsers');
       expect(getUsersEndpoint?.summary).toBe('Get all users');
-      
-      // 检查 POST /users
+
       const createUserEndpoint = endpoints.find(e => e.path === '/users' && e.method === 'POST');
       expect(createUserEndpoint).toBeDefined();
       expect(createUserEndpoint?.operationId).toBe('createUser');
-      expect(createUserEndpoint?.parameters).toHaveLength(0); // body 参数不在 parameters 中
-      expect(createUserEndpoint?.requestBody).toBeDefined(); // body 参数在 requestBody 中
+      expect(createUserEndpoint?.parameters).toHaveLength(0);
+      expect(createUserEndpoint?.requestBody).toBeDefined();
       expect(createUserEndpoint?.requestBody?.type).toBe('NewUser');
-      
-      // 检查 GET /users/{id}
+
       const getUserByIdEndpoint = endpoints.find(e => e.path === '/users/{id}' && e.method === 'GET');
       expect(getUserByIdEndpoint).toBeDefined();
       expect(getUserByIdEndpoint?.parameters).toHaveLength(1);
@@ -146,17 +142,15 @@ describe('SwaggerParser', () => {
   describe('getTypeDefinitions', () => {
     it('should parse type definitions correctly', () => {
       const types = parser.getTypeDefinitions();
-      
+
       expect(types).toHaveLength(2);
-      
-      // 检查 User 类型
+
       const userType = types.find(t => t.name === 'User');
       expect(userType).toBeDefined();
       expect(userType?.type).toBe('interface');
       expect(userType?.properties).toBeDefined();
       expect(Object.keys(userType?.properties || {})).toHaveLength(3);
-      
-      // 检查 NewUser 类型
+
       const newUserType = types.find(t => t.name === 'NewUser');
       expect(newUserType).toBeDefined();
       expect(newUserType?.type).toBe('interface');
@@ -171,12 +165,10 @@ describe('SwaggerParser', () => {
   });
 
   describe('resolveType', () => {
-    it('should resolve basic types correctly', () => {
-      // 这里需要访问私有方法，在实际测试中可能需要重构
-      // 或者通过公共方法间接测试
+    it('should resolve path parameter types correctly', () => {
       const endpoints = parser.getApiEndpoints();
       const getUserEndpoint = endpoints.find(e => e.operationId === 'getUserById');
-      
+
       expect(getUserEndpoint?.parameters[0].type).toBe('number');
     });
   });
