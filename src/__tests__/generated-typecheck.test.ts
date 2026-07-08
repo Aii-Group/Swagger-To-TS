@@ -84,19 +84,39 @@ const comprehensiveSpec: SwaggerSpec = {
   }
 };
 
-function typecheckGeneratedOutput(outputDir: string): void {
+function resolveLocalTscBin(): string {
+  return require.resolve('typescript/bin/tsc', {
+    paths: [path.resolve(__dirname, '../..')]
+  });
+}
+
+async function typecheckGeneratedOutput(outputDir: string): Promise<void> {
+  const projectRoot = path.resolve(__dirname, '../..');
   const tsconfigPath = path.join(outputDir, 'tsconfig.json');
-  const strictConfig = path.resolve(__dirname, '../../tsconfig.generated.json');
+  const strictConfig = path.resolve(projectRoot, 'tsconfig.generated.json');
+  const nodeModulesLink = path.join(outputDir, 'node_modules');
+
+  if (!(await fs.pathExists(nodeModulesLink))) {
+    await fs.symlink(path.join(projectRoot, 'node_modules'), nodeModulesLink, 'dir');
+  }
+
   fs.writeJsonSync(tsconfigPath, {
     extends: strictConfig,
     include: ['**/*.ts']
   });
 
-  execSync(`npx tsc --noEmit -p "${tsconfigPath}"`, {
-    cwd: outputDir,
-    stdio: 'pipe',
-    encoding: 'utf-8'
-  });
+  const tscBin = resolveLocalTscBin();
+  try {
+    execSync(`"${process.execPath}" "${tscBin}" --noEmit -p "${tsconfigPath}"`, {
+      cwd: outputDir,
+      stdio: 'pipe',
+      encoding: 'utf-8'
+    });
+  } catch (error) {
+    const execError = error as { stdout?: string; stderr?: string };
+    const details = [execError.stdout, execError.stderr].filter(Boolean).join('\n');
+    throw new Error(details || (error instanceof Error ? error.message : String(error)));
+  }
 }
 
 describe('generated code strict typecheck', () => {
@@ -140,6 +160,6 @@ describe('generated code strict typecheck', () => {
     expect(typesContent).toContain('AxiosResponse<unknown>');
     expect(typesContent).toContain('TypedHttpClient');
 
-    expect(() => typecheckGeneratedOutput(outputDir)).not.toThrow();
+    await expect(typecheckGeneratedOutput(outputDir)).resolves.toBeUndefined();
   });
 });

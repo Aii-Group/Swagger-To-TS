@@ -137,6 +137,16 @@ export class TypeScriptGenerator {
     lines.push('  patch<T = unknown>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T>;');
     lines.push('}');
     lines.push('');
+    lines.push('export function toFormDataValue(value: unknown): string | Blob {');
+    lines.push('  if (typeof value === \'string\') {');
+    lines.push('    return value;');
+    lines.push('  }');
+    lines.push('  if (typeof value === \'object\' && value !== null && value instanceof Blob) {');
+    lines.push('    return value;');
+    lines.push('  }');
+    lines.push('  return String(value);');
+    lines.push('}');
+    lines.push('');
 
     typeDefinitions.forEach(typeDef => {
       if (typeDef.description) {
@@ -631,22 +641,20 @@ export class TypeScriptGenerator {
     // 生成 FormData 构建代码
     if (bodyParam?.isFormData && bodyParam.formDataFields) {
       lines.push(`    const formData = new FormData();`);
-      const formDataValueExpr = (expr: string) =>
-        `${expr} instanceof Blob ? ${expr} : String(${expr})`;
       Object.entries(bodyParam.formDataFields).forEach(([fieldName, fieldInfo]) => {
         const isArray = fieldInfo.type.endsWith('[]');
         if (fieldInfo.required) {
           if (isArray) {
-            lines.push(`    ${fieldName}.forEach(item => formData.append('${fieldName}', item instanceof Blob ? item : String(item)));`);
+            lines.push(`    ${fieldName}.forEach(item => formData.append('${fieldName}', Types.toFormDataValue(item)));`);
           } else {
-            lines.push(`    formData.append('${fieldName}', ${formDataValueExpr(fieldName)});`);
+            lines.push(`    formData.append('${fieldName}', Types.toFormDataValue(${fieldName}));`);
           }
         } else {
           lines.push(`    if (${fieldName} !== undefined) {`);
           if (isArray) {
-            lines.push(`      ${fieldName}.forEach(item => formData.append('${fieldName}', item instanceof Blob ? item : String(item)));`);
+            lines.push(`      ${fieldName}.forEach(item => formData.append('${fieldName}', Types.toFormDataValue(item)));`);
           } else {
-            lines.push(`      formData.append('${fieldName}', ${formDataValueExpr(fieldName)});`);
+            lines.push(`      formData.append('${fieldName}', Types.toFormDataValue(${fieldName}));`);
           }
           lines.push(`    }`);
         }
