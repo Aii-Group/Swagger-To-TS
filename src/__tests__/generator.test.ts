@@ -181,4 +181,66 @@ describe('TypeScriptGenerator typePrefix', () => {
     expect(apiContent).toContain('readonly user: UserApi');
     expect(indexContent).toContain("export * from './modules/user'");
   });
+
+  it('should pass request body via config.data for DELETE methods', async () => {
+    const deleteBodySpec: SwaggerSpec = {
+      openapi: '3.0.0',
+      info: { title: 'Delete Body API', version: '1.0.0' },
+      paths: {
+        '/items/batch': {
+          delete: {
+            operationId: 'deleteBatch',
+            requestBody: {
+              required: true,
+              content: {
+                'application/json': {
+                  schema: { type: 'array', items: { type: 'integer' } }
+                }
+              }
+            },
+            responses: { '200': { description: 'OK' } }
+          }
+        },
+        '/org/scopes/{scope}/users/{userId}/roles': {
+          delete: {
+            operationId: 'revokeRoles',
+            parameters: [
+              { name: 'scope', in: 'path', required: true, schema: { type: 'string' } },
+              { name: 'userId', in: 'path', required: true, schema: { type: 'string' } }
+            ],
+            requestBody: {
+              required: true,
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: { roleIds: { type: 'array', items: { type: 'string' } } }
+                  }
+                }
+              }
+            },
+            responses: { '200': { description: 'OK' } }
+          }
+        }
+      }
+    };
+
+    const parser = new SwaggerParser(deleteBodySpec, { silentWarnings: true });
+    const generator = new TypeScriptGenerator(
+      {
+        input: './swagger.json',
+        output: outputDir,
+        generateClient: true
+      },
+      parser
+    );
+
+    await generator.generate();
+
+    const apiContent = await fs.readFile(path.join(outputDir, 'api.ts'), 'utf-8');
+    expect(apiContent).toContain('async deleteBatch(data: number[]');
+    expect(apiContent).toContain("this.http.delete<void>('/items/batch', { data, ...config })");
+    expect(apiContent).toContain('async revokeRoles(scope: string, userId: string, data:');
+    expect(apiContent).toContain('`/org/scopes/${scope}/users/${userId}/roles`, { data, ...config }');
+  });
 });

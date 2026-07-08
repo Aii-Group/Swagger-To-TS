@@ -389,14 +389,14 @@ export class SwaggerParser {
     // allOf → 交叉类型
     if (schema.allOf && schema.allOf.length > 0) {
       const types = schema.allOf.map(s => this.resolveType(s, location));
-      const merged = types.length === 1 ? types[0] : types.join(' & ');
+      const merged = types.length === 1 ? types[0]! : types.join(' & ');
       return schema.nullable ? `(${merged}) | null` : merged;
     }
 
     // oneOf → 联合类型（语义上是"恰好一个"，TypeScript 中近似 union）
     if (schema.oneOf && schema.oneOf.length > 0) {
-      const types = schema.oneOf.map(s => this.resolveType(s, location));
-      const merged = types.join(' | ');
+      const discriminated = this.buildDiscriminatedUnion(schema, location);
+      const merged = discriminated ?? schema.oneOf.map(s => this.resolveType(s, location)).join(' | ');
       return schema.nullable ? `${merged} | null` : merged;
     }
 
@@ -510,6 +510,60 @@ export class SwaggerParser {
     return LOOSE_OBJECT_TYPE;
   }
 
+  /**
+   * 当 oneOf 带有 discriminator 时，生成交叉字面量的判别联合类型
+   */
+  private buildDiscriminatedUnion(schema: SwaggerSchema, location?: string): string | null {
+    const discriminator = schema.discriminator;
+    if (!discriminator?.propertyName || !schema.oneOf?.length) {
+      return null;
+    }
+
+    const propertyName = this.toPropertyKey(discriminator.propertyName);
+
+    if (discriminator.mapping && Object.keys(discriminator.mapping).length > 0) {
+      const members = Object.entries(discriminator.mapping).map(([discValue, ref]) => {
+        const branchType = this.resolveType({ $ref: ref }, location);
+        return `(${branchType} & { ${propertyName}: '${discValue}' })`;
+      });
+      return members.join(' | ');
+    }
+
+    const members = schema.oneOf.map(branch => {
+      const branchType = this.resolveType(branch, location);
+      const discValue = this.inferDiscriminatorValue(branch, discriminator.propertyName);
+      if (discValue !== null) {
+        return `(${branchType} & { ${propertyName}: '${discValue}' })`;
+      }
+      return branchType;
+    });
+
+    const hasLiteralDiscriminator = members.some(member => member.includes(`& { ${propertyName}:`));
+    return hasLiteralDiscriminator ? members.join(' | ') : null;
+  }
+
+  private inferDiscriminatorValue(schema: SwaggerSchema, propertyName: string): string | null {
+    const resolveFromProperties = (properties?: { [name: string]: SwaggerSchema }): string | null => {
+      const discProp = properties?.[propertyName];
+      if (discProp?.enum?.[0] !== undefined) {
+        return String(discProp.enum[0]);
+      }
+      if (discProp?.const !== undefined) {
+        return String(discProp.const);
+      }
+      return null;
+    };
+
+    if (schema.$ref) {
+      const refName = schema.$ref.split('/').pop();
+      if (!refName) return null;
+      const definition = this.definitions.get(refName);
+      return resolveFromProperties(definition?.properties);
+    }
+
+    return resolveFromProperties(schema.properties);
+  }
+
   getTypeDefinitions(): TypeDefinition[] {
     if (this.cachedTypeDefinitions) return this.cachedTypeDefinitions;
 
@@ -552,8 +606,8 @@ export class SwaggerParser {
 
     // oneOf → 联合类型别名
     if (schema.oneOf && schema.oneOf.length > 0) {
-      const types = schema.oneOf.map(s => this.resolveType(s, location));
-      const aliasType = types.join(' | ');
+      const discriminated = this.buildDiscriminatedUnion(schema, location);
+      const aliasType = discriminated ?? schema.oneOf.map(s => this.resolveType(s, location)).join(' | ');
       return {
         name: sanitizedName,
         type: 'type',
@@ -767,7 +821,7 @@ export class SwaggerParser {
   getBaseUrl(): string {
     // OpenAPI 3.0
     if (this.spec.servers && this.spec.servers.length > 0) {
-      return this.spec.servers[0].url;
+      return this.spec.servers[0]!.url;
     }
 
     // Swagger 2.0
@@ -796,6 +850,6 @@ export class SwaggerParser {
       if (match) return match;
     }
 
-    return contentTypes[0];
+    return contentTypes[0] ?? 'application/json';
   }
 }

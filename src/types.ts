@@ -63,7 +63,7 @@ export interface SwaggerParameter {
   schema?: SwaggerSchema;
   items?: SwaggerSchema;
   collectionFormat?: string;
-  enum?: any[];
+  enum?: unknown[];
 }
 
 export interface SwaggerRequestBody {
@@ -98,6 +98,11 @@ export interface SwaggerComponents {
   schemas?: SwaggerDefinitions;
 }
 
+export interface SwaggerDiscriminator {
+  propertyName: string;
+  mapping?: Record<string, string>;
+}
+
 export interface SwaggerSchema {
   type?: string;
   format?: string;
@@ -105,19 +110,21 @@ export interface SwaggerSchema {
   properties?: { [name: string]: SwaggerSchema };
   additionalProperties?: SwaggerSchema | boolean;
   required?: string[];
-  enum?: any[];
+  enum?: unknown[];
   $ref?: string;
   allOf?: SwaggerSchema[];
   oneOf?: SwaggerSchema[];
   anyOf?: SwaggerSchema[];
   not?: SwaggerSchema;
   description?: string;
-  example?: any;
-  default?: any;
+  example?: unknown;
+  default?: unknown;
+  const?: unknown;
   nullable?: boolean;
   readOnly?: boolean;
   writeOnly?: boolean;
   title?: string;
+  discriminator?: SwaggerDiscriminator;
   minimum?: number;
   maximum?: number;
   minLength?: number;

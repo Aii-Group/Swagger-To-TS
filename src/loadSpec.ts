@@ -3,6 +3,7 @@ import * as path from 'path';
 import axios from 'axios';
 import { parse as parseYaml } from 'yaml';
 import { SwaggerSpec } from './types';
+import { isSwaggerSpec } from './typeGuards';
 
 const SPEC_ACCEPT_HEADERS = {
   Accept: 'application/json, application/yaml, text/yaml'
@@ -23,10 +24,17 @@ function looksLikeJson(content: string): boolean {
   return trimmed.startsWith('{') || trimmed.startsWith('[');
 }
 
+function assertSwaggerSpec(value: unknown, source?: string): SwaggerSpec {
+  if (!isSwaggerSpec(value)) {
+    throw new Error(`Not a valid Swagger/OpenAPI file${source ? `: ${source}` : ''}`);
+  }
+  return value;
+}
+
 export function parseSpecContent(content: string, filePath?: string): SwaggerSpec {
   if (isYamlExtension(filePath) || (!looksLikeJson(content) && content.trim().length > 0)) {
     try {
-      return parseYaml(content) as SwaggerSpec;
+      return assertSwaggerSpec(parseYaml(content), filePath);
     } catch (yamlError) {
       if (isYamlExtension(filePath)) {
         throw new Error(`Failed to parse YAML spec${filePath ? `: ${filePath}` : ''}. ${yamlError}`);
@@ -35,10 +43,10 @@ export function parseSpecContent(content: string, filePath?: string): SwaggerSpe
   }
 
   try {
-    return JSON.parse(content) as SwaggerSpec;
+    return assertSwaggerSpec(JSON.parse(content), filePath);
   } catch (jsonError) {
     try {
-      return parseYaml(content) as SwaggerSpec;
+      return assertSwaggerSpec(parseYaml(content), filePath);
     } catch {
       throw new Error(`Failed to parse spec as JSON or YAML. ${jsonError}`);
     }
@@ -65,7 +73,7 @@ export async function loadSpec(input: string, options?: LoadSpecOptions): Promis
         return parseSpecContent(response.data, input);
       }
 
-      return response.data as SwaggerSpec;
+      return assertSwaggerSpec(response.data, input);
     } catch (error) {
       throw new Error(`Failed to fetch Swagger spec from URL: ${input}. Error: ${error}`);
     }

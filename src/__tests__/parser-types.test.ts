@@ -54,8 +54,8 @@ describe('SwaggerParser type inference without any', () => {
     };
 
     const parser = new SwaggerParser(spec, { silentWarnings: true });
-    const endpoint = parser.getApiEndpoints()[0];
-    const responseType = endpoint.responses[0].type;
+    const endpoint = parser.getApiEndpoints()[0]!;
+    const responseType = endpoint.responses[0]!.type;
 
     expect(responseType).toContain(FALLBACK_ARRAY_TYPE);
     expect(responseType).toContain(LOOSE_OBJECT_TYPE);
@@ -93,7 +93,7 @@ describe('SwaggerParser type inference without any', () => {
     } as unknown as SwaggerSpec;
 
     const parser = new SwaggerParser(spec, { silentWarnings: true });
-    const endpoint = parser.getApiEndpoints()[0];
+    const endpoint = parser.getApiEndpoints()[0]!;
     expect(endpoint.requestBody?.type).toBe(FALLBACK_SCALAR_TYPE);
   });
 });

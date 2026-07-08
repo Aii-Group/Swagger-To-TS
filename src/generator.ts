@@ -17,7 +17,7 @@ import {
 import { FALLBACK_SCALAR_TYPE } from './typeUtils';
 
 const BASIC_TYPES = new Set([
-  'string', 'number', 'boolean', 'any', 'void', 'object',
+  'string', 'number', 'boolean', 'void',
   'unknown', 'never', 'null', 'undefined', 'File', 'FormData',
   'Blob', 'ArrayBuffer'
 ]);
@@ -84,7 +84,7 @@ export class TypeScriptGenerator {
     lines.push('// 自动生成的类型定义文件');
     lines.push('// 请勿手动修改此文件');
     lines.push('');
-    lines.push("import type { AxiosResponse, InternalAxiosRequestConfig } from 'axios';");
+    lines.push("import type { AxiosResponse, InternalAxiosRequestConfig, AxiosRequestConfig } from 'axios';");
     lines.push('');
 
     lines.push('export interface ApiResponse<T = unknown> {');
@@ -110,20 +110,31 @@ export class TypeScriptGenerator {
     lines.push('}');
     lines.push('');
     lines.push('export interface ResponseInterceptor {');
-    lines.push('  onFulfilled?: (response: AxiosResponse) => unknown | Promise<unknown>;');
+    lines.push('  onFulfilled?: (response: AxiosResponse<unknown>) => unknown | Promise<unknown>;');
     lines.push('  onRejected?: (error: unknown) => unknown;');
     lines.push('}');
     lines.push('');
     lines.push('export interface RawResponseInterceptor {');
     lines.push('  onFulfilled?: (');
-    lines.push('    response: AxiosResponse');
-    lines.push('  ) => AxiosResponse | Promise<AxiosResponse>;');
+    lines.push('    response: AxiosResponse<unknown>');
+    lines.push('  ) => AxiosResponse<unknown> | Promise<AxiosResponse<unknown>>;');
     lines.push('  onRejected?: (error: unknown) => unknown;');
     lines.push('}');
     lines.push('');
     lines.push('export interface InterceptorConfig {');
     lines.push('  request?: RequestInterceptor;');
     lines.push('  response?: ResponseInterceptor;');
+    lines.push('}');
+    lines.push('');
+    lines.push('/** 响应拦截器解包后的 HTTP 客户端类型 */');
+    lines.push('export interface TypedHttpClient {');
+    lines.push('  get<T = unknown>(url: string, config?: AxiosRequestConfig): Promise<T>;');
+    lines.push('  delete<T = unknown>(url: string, config?: AxiosRequestConfig): Promise<T>;');
+    lines.push('  head<T = unknown>(url: string, config?: AxiosRequestConfig): Promise<T>;');
+    lines.push('  options<T = unknown>(url: string, config?: AxiosRequestConfig): Promise<T>;');
+    lines.push('  post<T = unknown>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T>;');
+    lines.push('  put<T = unknown>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T>;');
+    lines.push('  patch<T = unknown>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T>;');
     lines.push('}');
     lines.push('');
 
@@ -204,8 +215,11 @@ export class TypeScriptGenerator {
     lines.push('// 自动生成的 API 客户端文件');
     lines.push('// 请勿手动修改此文件');
     lines.push('');
-    lines.push('import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, InternalAxiosRequestConfig } from \'axios\';');
+    lines.push('import axios from \'axios\';');
+    lines.push('import type { AxiosInstance, AxiosRequestConfig, AxiosResponse, InternalAxiosRequestConfig } from \'axios\';');
     lines.push('import * as Types from \'./types\';');
+    lines.push('');
+    lines.push(...this.generateHttpClientHelpers());
     lines.push('');
     lines.push('export interface ApiClientConfig extends AxiosRequestConfig {');
     lines.push('  baseURL?: string;');
@@ -224,6 +238,7 @@ export class TypeScriptGenerator {
 
     lines.push(`export class ApiClient {`);
     lines.push(`  private ${instanceName}: AxiosInstance;`);
+    lines.push('  private http: Types.TypedHttpClient;');
     lines.push('');
     lines.push(`  constructor(config: ApiClientConfig = {}) {`);
     lines.push(`    const { baseURL = '${baseURL}', interceptors, ...axiosConfig } = config;`);
@@ -234,6 +249,7 @@ export class TypeScriptGenerator {
     lines.push(`      headers: { 'Content-Type': 'application/json' },`);
     lines.push(`      ...axiosConfig,`);
     lines.push(`    });`);
+    lines.push(`    this.http = createTypedHttpClient(this.${instanceName});`);
     lines.push('');
     lines.push(`    this.setupInterceptors(interceptors${defaultInterceptors.length > 0 ? ' || defaultInterceptors' : ''});`);
     lines.push(`  }`);
@@ -241,7 +257,7 @@ export class TypeScriptGenerator {
     lines.push(...this.generateInterceptorMethods(instanceName));
 
     const groupedEndpoints = this.groupEndpointsByTag(endpoints);
-    const axiosRef = `this.${instanceName}`;
+    const axiosRef = 'this.http';
 
     Object.entries(groupedEndpoints).forEach(([tag, tagEndpoints]) => {
       if (tag && tag !== 'default') {
@@ -270,13 +286,16 @@ export class TypeScriptGenerator {
     lines.push('// 自动生成的 API 客户端文件');
     lines.push('// 请勿手动修改此文件');
     lines.push('');
-    lines.push('import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, InternalAxiosRequestConfig } from \'axios\';');
+    lines.push('import axios from \'axios\';');
+    lines.push('import type { AxiosInstance, AxiosRequestConfig, AxiosResponse, InternalAxiosRequestConfig } from \'axios\';');
     lines.push('import * as Types from \'./types\';');
 
     modules.forEach(module => {
       lines.push(`import { ${module.className} } from './modules/${module.fileName}';`);
     });
 
+    lines.push('');
+    lines.push(...this.generateHttpClientHelpers());
     lines.push('');
     lines.push('export interface ApiClientConfig extends AxiosRequestConfig {');
     lines.push('  baseURL?: string;');
@@ -295,6 +314,7 @@ export class TypeScriptGenerator {
 
     lines.push('export class ApiClient {');
     lines.push(`  private ${instanceName}: AxiosInstance;`);
+    lines.push('  private http: Types.TypedHttpClient;');
     lines.push('');
 
     modules.forEach(module => {
@@ -314,12 +334,13 @@ export class TypeScriptGenerator {
     lines.push(`      headers: { 'Content-Type': 'application/json' },`);
     lines.push('      ...axiosConfig,');
     lines.push('    });');
+    lines.push(`    this.http = createTypedHttpClient(this.${instanceName});`);
     lines.push('');
     lines.push(`    this.setupInterceptors(interceptors${defaultInterceptors.length > 0 ? ' || defaultInterceptors' : ''});`);
     lines.push('');
 
     modules.forEach(module => {
-      lines.push(`    this.${module.propertyName} = new ${module.className}(this.${instanceName});`);
+      lines.push(`    this.${module.propertyName} = new ${module.className}(this.http);`);
     });
 
     lines.push('  }');
@@ -340,11 +361,11 @@ export class TypeScriptGenerator {
     lines.push('// 自动生成的 API 模块文件');
     lines.push('// 请勿手动修改此文件');
     lines.push('');
-    lines.push('import { AxiosInstance, AxiosRequestConfig } from \'axios\';');
+    lines.push('import type { AxiosRequestConfig } from \'axios\';');
     lines.push('import * as Types from \'../types\';');
     lines.push('');
     lines.push(`export class ${className} {`);
-    lines.push('  constructor(private client: AxiosInstance) {}');
+    lines.push('  constructor(private client: Types.TypedHttpClient) {}');
     lines.push('');
 
     if (tag && tag !== 'default') {
@@ -362,8 +383,8 @@ export class TypeScriptGenerator {
   private generateInterceptorMethods(instanceName: string): string[] {
     const wrapperField = getResponseWrapperField(this.config);
     const defaultResponseTransform = wrapperField
-      ? `(response: AxiosResponse) => { const body = response.data; return (body as Record<string, unknown>)?.${wrapperField} ?? body; }`
-      : '(response: AxiosResponse) => response.data';
+      ? `(response: AxiosResponse<unknown>) => { const body = response.data; return (body as Record<string, unknown>)?.${wrapperField} ?? body; }`
+      : '(response: AxiosResponse<unknown>) => response.data';
 
     return [
       '  private setupInterceptors(interceptors?: Types.InterceptorConfig) {',
@@ -372,16 +393,9 @@ export class TypeScriptGenerator {
       `    this.${instanceName}.interceptors.request.use(reqFulfilled, reqRejected);`,
       '',
       `    const resFulfilled = interceptors?.response?.onFulfilled ?? (${defaultResponseTransform});`,
-      '    const resRejected = interceptors?.response?.onRejected ?? ((error: unknown) => {',
-      '      const apiError: Types.ApiError = {',
-      '        message: (error as Error).message,',
-      '        status: (error as { response?: { status?: number } }).response?.status,',
-      '        code: (error as { code?: string }).code,',
-      '      };',
-      '      return Promise.reject(apiError);',
-      '    });',
+      '    const resRejected = interceptors?.response?.onRejected ?? ((error: unknown) => Promise.reject(toApiError(error)));',
       `    this.${instanceName}.interceptors.response.use(`,
-      '      resFulfilled as (response: AxiosResponse) => AxiosResponse | Promise<AxiosResponse>,',
+      '      resFulfilled as Parameters<AxiosInstance[\'interceptors\'][\'response\'][\'use\']>[0],',
       '      resRejected',
       '    );',
       '  }',
@@ -395,7 +409,7 @@ export class TypeScriptGenerator {
       '',
       '  setResponseInterceptor(interceptor: Types.RawResponseInterceptor) {',
       `    this.${instanceName}.interceptors.response.use(`,
-      '      interceptor.onFulfilled ?? ((response: AxiosResponse) => response),',
+      '      interceptor.onFulfilled ?? ((response: AxiosResponse<unknown>) => response),',
       '      interceptor.onRejected ?? ((error: unknown) => Promise.reject(error))',
       '    );',
       '  }',
@@ -407,6 +421,36 @@ export class TypeScriptGenerator {
       '  }',
       ''
     ];
+  }
+
+  private generateHttpClientHelpers(): string[] {
+    return [
+      'function createTypedHttpClient(client: AxiosInstance): Types.TypedHttpClient {',
+      '  return client as unknown as Types.TypedHttpClient;',
+      '}',
+      '',
+      'function toApiError(error: unknown): Types.ApiError {',
+      '  const message = error instanceof Error ? error.message : String(error);',
+      '  let status: number | undefined;',
+      '  let code: string | undefined;',
+      '  if (typeof error === \'object\' && error !== null) {',
+      '    const err = error as { response?: { status?: unknown }; code?: unknown };',
+      '    if (typeof err.response?.status === \'number\') {',
+      '      status = err.response.status;',
+      '    }',
+      '    if (typeof err.code === \'string\') {',
+      '      code = err.code;',
+      '    }',
+      '  }',
+      '  return { message, status, code };',
+      '}',
+    ];
+  }
+
+  private normalizeScalarType(type: string): string {
+    if (type === 'any') return FALLBACK_SCALAR_TYPE;
+    if (type === 'object') return 'Record<string, unknown>';
+    return type;
   }
 
   private generateDefaultInterceptorsBlock(): string[] {
@@ -553,12 +597,19 @@ export class TypeScriptGenerator {
     const hasPathParams = pathParams.length > 0;
     const urlStr = hasPathParams ? `\`${url}\`` : `'${url}'`;
     const method = endpoint.method.toLowerCase();
+    const methodsWithoutBodyArg = ['get', 'delete', 'head', 'options'];
+    const bodyInConfig = Boolean(bodyParam && methodsWithoutBodyArg.includes(method));
+    const bodyArg = bodyParam?.isFormData ? 'formData' : 'data';
 
     // 构建 config 对象
     const configParts: string[] = [];
 
     if (bodyParam?.isFormData) {
       configParts.push(`headers: { 'Content-Type': 'multipart/form-data' }`);
+    }
+
+    if (bodyInConfig) {
+      configParts.push(bodyArg === 'data' ? 'data' : `data: ${bodyArg}`);
     }
 
     if (queryParams.length > 0) {
@@ -580,20 +631,22 @@ export class TypeScriptGenerator {
     // 生成 FormData 构建代码
     if (bodyParam?.isFormData && bodyParam.formDataFields) {
       lines.push(`    const formData = new FormData();`);
+      const formDataValueExpr = (expr: string) =>
+        `${expr} instanceof Blob ? ${expr} : String(${expr})`;
       Object.entries(bodyParam.formDataFields).forEach(([fieldName, fieldInfo]) => {
         const isArray = fieldInfo.type.endsWith('[]');
         if (fieldInfo.required) {
           if (isArray) {
-            lines.push(`    ${fieldName}.forEach(item => formData.append('${fieldName}', item as any));`);
+            lines.push(`    ${fieldName}.forEach(item => formData.append('${fieldName}', item instanceof Blob ? item : String(item)));`);
           } else {
-            lines.push(`    formData.append('${fieldName}', ${fieldName} as any);`);
+            lines.push(`    formData.append('${fieldName}', ${formDataValueExpr(fieldName)});`);
           }
         } else {
           lines.push(`    if (${fieldName} !== undefined) {`);
           if (isArray) {
-            lines.push(`      ${fieldName}.forEach(item => formData.append('${fieldName}', item as any));`);
+            lines.push(`      ${fieldName}.forEach(item => formData.append('${fieldName}', item instanceof Blob ? item : String(item)));`);
           } else {
-            lines.push(`      formData.append('${fieldName}', ${fieldName} as any);`);
+            lines.push(`      formData.append('${fieldName}', ${formDataValueExpr(fieldName)});`);
           }
           lines.push(`    }`);
         }
@@ -601,15 +654,12 @@ export class TypeScriptGenerator {
     }
 
     // 根据 HTTP 方法生成正确的 axios 调用
-    if (['get', 'delete', 'head', 'options'].includes(method)) {
-      lines.push(`    return ${axiosRef}.${method}(${urlStr}, ${configStr});`);
+    if (methodsWithoutBodyArg.includes(method)) {
+      lines.push(`    return ${axiosRef}.${method}<${returnType}>(${urlStr}, ${configStr});`);
+    } else if (bodyParam) {
+      lines.push(`    return ${axiosRef}.${method}<${returnType}>(${urlStr}, ${bodyArg}, ${configStr});`);
     } else {
-      if (bodyParam) {
-        const bodyArg = bodyParam.isFormData ? 'formData' : 'data';
-        lines.push(`    return ${axiosRef}.${method}(${urlStr}, ${bodyArg}, ${configStr});`);
-      } else {
-        lines.push(`    return ${axiosRef}.${method}(${urlStr}, undefined, ${configStr});`);
-      }
+      lines.push(`    return ${axiosRef}.${method}<${returnType}>(${urlStr}, undefined, ${configStr});`);
     }
 
     lines.push(`  }`);
@@ -726,6 +776,8 @@ export class TypeScriptGenerator {
   private addTypesPrefix(type: string): string {
     if (!type) return FALLBACK_SCALAR_TYPE;
 
+    type = this.normalizeScalarType(type.trim());
+
     // 联合类型：深度感知分割
     if (this.hasTopLevelOperator(type, '|')) {
       return this.splitTopLevel(type, '|')
@@ -835,7 +887,7 @@ export class TypeScriptGenerator {
 
   /**
    * 智能分割泛型参数列表，正确处理嵌套泛型
-   * 例如 "string, Record<string, any>" → ["string", "Record<string, any>"]
+   * 例如 "string, Record<string, unknown>" → ["string", "Record<string, unknown>"]
    */
   private splitGenericArgs(args: string): string[] {
     const parts: string[] = [];

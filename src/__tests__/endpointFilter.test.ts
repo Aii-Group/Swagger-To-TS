@@ -48,7 +48,7 @@ describe('endpointFilter', () => {
     };
     const result = filterEndpoints(endpoints, config);
     expect(result).toHaveLength(1);
-    expect(result[0].path).toBe('/users');
+    expect(result[0]!.path).toBe('/users');
   });
 
   it('should exclude deprecated endpoints', () => {

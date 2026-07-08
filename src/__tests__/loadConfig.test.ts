@@ -35,8 +35,8 @@ describe('loadConfig', () => {
   });
 
   it('should validate required fields', () => {
-    expect(() => validateConfig({}, 'invalid')).toThrow('Missing "input"');
-    expect(() => validateConfig({ input: './a.json' }, 'invalid')).toThrow('Missing "output"');
+    expect(() => validateConfig({}, 'invalid')).toThrow('"input"');
+    expect(() => validateConfig({ input: './a.json' }, 'invalid')).toThrow('"output"');
   });
 
   it('should expand comma-separated config paths', () => {
@@ -49,7 +49,7 @@ describe('loadConfig', () => {
 
     const configs = await loadConfigFile(filePath);
     expect(configs).toHaveLength(1);
-    expect(configs[0].output).toBe('./src/api');
+    expect(configs[0]!.output).toBe('./src/api');
   });
 
   it('should load yaml config file', async () => {
@@ -61,7 +61,7 @@ describe('loadConfig', () => {
     );
 
     const configs = await loadConfigFile(filePath);
-    expect(configs[0].baseURL).toBe('/api');
+    expect(configs[0]!.baseURL).toBe('/api');
   });
 
   it('should load js config file', async () => {
@@ -73,7 +73,7 @@ describe('loadConfig', () => {
     );
 
     const configs = await loadConfigFile(filePath);
-    expect(configs[0].output).toBe('./src/api/js');
+    expect(configs[0]!.output).toBe('./src/api/js');
   });
 
   it('should load ts config file with default export', async () => {
@@ -85,7 +85,7 @@ describe('loadConfig', () => {
     );
 
     const configs = await loadConfigFile(filePath);
-    expect(configs[0].output).toBe('./src/api/ts');
+    expect(configs[0]!.output).toBe('./src/api/ts');
   });
 
   it('should load ts config file with default array export', async () => {
@@ -98,7 +98,7 @@ describe('loadConfig', () => {
 
     const configs = await loadConfigFile(filePath);
     expect(configs).toHaveLength(1);
-    expect(configs[0].output).toBe('./src/api/ts-array');
+    expect(configs[0]!.output).toBe('./src/api/ts-array');
   });
 
   it('should load multiple config files', async () => {

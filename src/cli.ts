@@ -120,7 +120,9 @@ program
       configs.forEach(config => applyGenerateOptions(config, options));
 
       for (let i = 0; i < configs.length; i++) {
-        await runGenerateForConfig(configs[i], i, configs.length);
+        const config = configs[i];
+        if (!config) continue;
+        await runGenerateForConfig(config, i, configs.length);
       }
 
       if (configs.length > 1) {

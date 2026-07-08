@@ -44,6 +44,10 @@ describe('loadSpec utilities', () => {
       const spec = parseSpecContent(yamlSpec);
       expect(spec.info.title).toBe('YAML API');
     });
+
+    it('should reject invalid swagger structure during parse', () => {
+      expect(() => parseSpecContent('title: broken\n', 'broken.yaml')).toThrow();
+    });
   });
 
   describe('validateSpecStructure', () => {

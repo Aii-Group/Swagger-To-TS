@@ -1,6 +1,10 @@
 #!/usr/bin/env sh
 . "$(dirname -- "$0")/_/husky.sh"
 
+# 运行类型检查
+echo "🔍 运行类型检查..."
+npm run typecheck
+
 # 运行测试
 echo "🧪 运行测试..."
 npm run test

@@ -3,6 +3,7 @@ import * as path from 'path';
 import { createJiti } from 'jiti';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { GeneratorConfig } from './types';
+import { isRecord, parseGeneratorConfig } from './typeGuards';
 
 type ConfigFileExport =
   | GeneratorConfig
@@ -18,19 +19,7 @@ export function expandConfigPaths(paths: string[]): string[] {
 }
 
 export function validateConfig(input: unknown, source: string): GeneratorConfig {
-  if (!input || typeof input !== 'object') {
-    throw new Error(`Invalid config at ${source}: expected an object`);
-  }
-
-  const config = input as GeneratorConfig;
-  if (!config.input) {
-    throw new Error(`Missing "input" in ${source}`);
-  }
-  if (!config.output) {
-    throw new Error(`Missing "output" in ${source}`);
-  }
-
-  return config;
+  return parseGeneratorConfig(input, source);
 }
 
 export function normalizeConfigExport(input: unknown, source: string): GeneratorConfig[] {
@@ -38,8 +27,8 @@ export function normalizeConfigExport(input: unknown, source: string): Generator
     return input.map((item, index) => validateConfig(item, `${source}[${index}]`));
   }
 
-  if (input && typeof input === 'object' && 'configs' in input) {
-    const configs = (input as { configs: unknown }).configs;
+  if (isRecord(input) && 'configs' in input) {
+    const configs = input.configs;
     if (!Array.isArray(configs)) {
       throw new Error(`Invalid config file ${source}: "configs" must be an array`);
     }
@@ -54,11 +43,11 @@ function isJsLikeExtension(ext: string): boolean {
 }
 
 function unwrapModuleExport(raw: unknown): unknown {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+  if (!isRecord(raw)) {
     return raw;
   }
 
-  const mod = raw as Record<string, unknown>;
+  const mod = raw;
   const keys = Object.keys(mod).filter(key => key !== '__esModule');
 
   if (keys.length === 1 && keys[0] === 'default' && 'default' in mod) {

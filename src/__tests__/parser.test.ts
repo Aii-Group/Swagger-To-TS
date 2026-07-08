@@ -134,8 +134,8 @@ describe('SwaggerParser', () => {
       const getUserByIdEndpoint = endpoints.find(e => e.path === '/users/{id}' && e.method === 'GET');
       expect(getUserByIdEndpoint).toBeDefined();
       expect(getUserByIdEndpoint?.parameters).toHaveLength(1);
-      expect(getUserByIdEndpoint?.parameters[0].name).toBe('id');
-      expect(getUserByIdEndpoint?.parameters[0].in).toBe('path');
+      expect(getUserByIdEndpoint?.parameters[0]!.name).toBe('id');
+      expect(getUserByIdEndpoint?.parameters[0]!.in).toBe('path');
     });
   });
 
@@ -169,7 +169,7 @@ describe('SwaggerParser', () => {
       const endpoints = parser.getApiEndpoints();
       const getUserEndpoint = endpoints.find(e => e.operationId === 'getUserById');
 
-      expect(getUserEndpoint?.parameters[0].type).toBe('number');
+      expect(getUserEndpoint?.parameters[0]!.type).toBe('number');
     });
   });
 });
