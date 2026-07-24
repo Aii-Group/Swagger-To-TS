@@ -28,7 +28,7 @@ CLI：`swagger-to-ts` · npm：`swagger-to-ts-axios`
 | 能力 | 说明 |
 |------|------|
 | 类型安全客户端 | `TypedHttpClient` 泛型封装，方法返回类型与拦截器解包一致 |
-| 多输入源 | 本地 JSON/YAML、远程 URL（可设 `fetchTimeout`） |
+| 多输入源 | 本地 JSON/YAML、远程 URL（可设 `fetchTimeout`；HTTPS+IP / 自签名见 `insecure`） |
 | 多配置格式 | JSON · YAML · JS · TS，支持单文件多配置与批量生成 |
 | 响应解包 | 适配 `{ code, data, message }` 等包装结构 |
 | 端点过滤 | 按 tag、路径通配符、deprecated 标记筛选 |
@@ -210,6 +210,10 @@ swagger-to-ts generate -c config-a.json,config-b.yaml
 | `splitByTag` | `boolean` | `false` | 按 tag 拆分模块 |
 | `silentWarnings` | `boolean` | `true` | 解析时是否逐条打印警告 |
 | `fetchTimeout` | `number` | `30000` | 远程 URL 超时（ms） |
+| `insecure` | `boolean` | `false` | 关闭 TLS 校验（自签名）；HTTPS+IP 默认已跳过 hostname 校验 |
+
+> [!TIP]
+> 使用 `https://<IP>/...` 拉取时，Node/OpenSSL 要求证书含 IP SAN。本工具会对 IP 主机自动跳过 hostname 校验（仍校验 CA）。若为自签名证书，请加 `insecure: true` 或 CLI `--insecure`。
 
 > [!NOTE]
 > 命令行 `-c` 与直接传参可组合使用，CLI 选项会覆盖配置文件同名字段。
@@ -239,6 +243,7 @@ swagger-to-ts generate [options]
 | `--exclude-deprecated` | 排除废弃端点 |
 | `--split-by-tag` | 按 tag 拆分 |
 | `--fetch-timeout <ms>` | 远程拉取超时 |
+| `--insecure` | 关闭 TLS 校验（自签名证书） |
 | `--silent-warnings` | 解析时不逐条打印警告 |
 
 ### `init`

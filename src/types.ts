@@ -231,6 +231,8 @@ export interface ParserOptions {
   silentWarnings?: boolean;
   /** 远程 URL 拉取超时（毫秒），默认 30000 */
   fetchTimeout?: number;
+  /** 关闭 TLS 证书校验（自签名证书）；HTTPS+IP 默认已跳过 hostname 校验 */
+  insecure?: boolean;
 }
 
 // 生成配置
@@ -256,4 +258,6 @@ export interface GeneratorConfig {
   silentWarnings?: boolean;
   /** 远程 URL 拉取超时（毫秒），默认 30000 */
   fetchTimeout?: number;
+  /** 关闭 TLS 证书校验（自签名证书）；HTTPS+IP 默认已跳过 hostname 校验 */
+  insecure?: boolean;
 }

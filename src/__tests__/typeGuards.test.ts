@@ -30,6 +30,16 @@ describe('typeGuards', () => {
     expect(config.responseWrapper).toEqual({ field: 'data' });
   });
 
+  it('should parse insecure flag', () => {
+    const config = parseGeneratorConfig({
+      input: 'https://10.0.0.8/v3/api-docs',
+      output: './src/api',
+      insecure: true
+    }, 'test.json');
+
+    expect(config.insecure).toBe(true);
+  });
+
   it('should reject invalid config fields', () => {
     expect(() => parseGeneratorConfig({}, 'bad.json')).toThrow('input');
     expect(() => parseGeneratorConfig({

@@ -40,7 +40,10 @@ export class SwaggerParser {
   }
 
   static async fromInput(input: string, options?: ParserOptions): Promise<SwaggerParser> {
-    const spec = await loadSpec(input, { fetchTimeout: options?.fetchTimeout });
+    const spec = await loadSpec(input, {
+      fetchTimeout: options?.fetchTimeout,
+      insecure: options?.insecure
+    });
     return new SwaggerParser(spec, options);
   }
 

@@ -117,6 +117,9 @@ export function parseGeneratorConfig(input: unknown, source: string): GeneratorC
     config.fetchTimeout = fetchTimeout;
   }
 
+  const insecure = readBooleanField(input, 'insecure');
+  if (insecure !== undefined) config.insecure = insecure;
+
   const filterTags = readStringArrayField(input, 'filterTags');
   if (filterTags !== undefined) config.filterTags = filterTags;
 

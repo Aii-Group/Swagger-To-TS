@@ -41,6 +41,7 @@ function applyGenerateOptions(config: GeneratorConfig, options: Record<string, u
   if (options.fetchTimeout !== undefined) {
     config.fetchTimeout = Number(options.fetchTimeout);
   }
+  if (options.insecure) config.insecure = true;
 }
 
 function collectConfigPaths(options: Record<string, unknown>): string[] {
@@ -94,6 +95,7 @@ program
   .option('--split-by-tag', '按 tag 拆分为 modules/*.ts')
   .option('--silent-warnings', '不在解析过程中逐条打印警告')
   .option('--fetch-timeout <ms>', '远程 URL 拉取超时（毫秒）')
+  .option('--insecure', '关闭 TLS 证书校验（自签名证书；HTTPS+IP 默认已跳过 hostname 校验）')
   .action(async (options) => {
     try {
       const configPaths = collectConfigPaths(options);
@@ -160,6 +162,7 @@ program
   .description('验证 Swagger/OpenAPI 文件')
   .requiredOption('-i, --input <file>', 'Swagger/OpenAPI 文件路径或 URL')
   .option('--report', '输出完整警告列表')
+  .option('--insecure', '关闭 TLS 证书校验（自签名证书；HTTPS+IP 默认已跳过 hostname 校验）')
   .action(async (options) => {
     try {
       const input = options.input;
@@ -168,7 +171,7 @@ program
         console.log(`🌐 从 URL 获取文件: ${input}`);
       }
 
-      const spec = await loadSpec(input);
+      const spec = await loadSpec(input, { insecure: Boolean(options.insecure) });
       validateSpecStructure(spec);
 
       const parser = new SwaggerParser(spec, { silentWarnings: true });

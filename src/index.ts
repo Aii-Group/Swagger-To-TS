@@ -23,7 +23,8 @@ export async function generateFromSwagger(config: GeneratorConfig): Promise<void
 
     const parser = await SwaggerParser.fromInput(config.input, {
       silentWarnings: config.silentWarnings ?? true,
-      fetchTimeout: config.fetchTimeout
+      fetchTimeout: config.fetchTimeout,
+      insecure: config.insecure
     });
     const endpoints = filterEndpoints(parser.getApiEndpoints(), config);
     const types = parser.getTypeDefinitions();
@@ -65,7 +66,14 @@ export function createDefaultConfig(input: string, output: string): GeneratorCon
 export * from './types';
 export { SwaggerParser } from './parser';
 export { TypeScriptGenerator } from './generator';
-export { loadSpec, parseSpecContent, validateSpecStructure, isRemoteInput } from './loadSpec';
+export {
+  loadSpec,
+  parseSpecContent,
+  validateSpecStructure,
+  isRemoteInput,
+  isIpHostname,
+  createRemoteHttpsAgent
+} from './loadSpec';
 export {
   loadConfigFile,
   loadConfigFiles,
